@@ -20,11 +20,29 @@ def _deg(rad: float) -> float:
 
 
 async def _mavlink_loop(reader: MavlinkReader, state: TelemetryState) -> None:
-    # This runs in a thread-like manner via asyncio.to_thread to avoid blocking.
+    # Run one long-lived blocking reader in a background thread and feed an asyncio.Queue.
+    # This avoids scheduling a new `asyncio.to_thread(...)` call per MAVLink packet.
+    loop = asyncio.get_running_loop()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+
+    def _enqueue(m: object) -> None:
+        try:
+            queue.put_nowait(m)
+        except asyncio.QueueFull:
+            # Drop when overwhelmed; we publish a low-rate snapshot anyway.
+            pass
+
+    def _reader_thread() -> None:
+        while True:
+            msg = reader.recv(1.0)
+            if msg is None:
+                continue
+            loop.call_soon_threadsafe(_enqueue, msg)
+
+    asyncio.create_task(asyncio.to_thread(_reader_thread))
+
     while True:
-        msg = await asyncio.to_thread(reader.recv, 1.0)
-        if msg is None:
-            continue
+        msg = await queue.get()
 
         reader.notify(msg)
 
@@ -59,7 +77,13 @@ async def _mavlink_loop(reader: MavlinkReader, state: TelemetryState) -> None:
                 state.gps.relative_alt = float(msg.data.get("relative_alt", 0)) / 1000.0
 
             if "fix_type" in msg.data:
-                state.gps.fix_type = int(msg.data.get("fix_type", 0))
+                # MAVLink GPS_FIX_TYPE is 0..8; keep within expected bounds.
+                fix_type = int(msg.data.get("fix_type", 0) or 0)
+                if fix_type < 0:
+                    fix_type = 0
+                elif fix_type > 8:
+                    fix_type = 8
+                state.gps.fix_type = fix_type
 
             if "satellites_visible" in msg.data:
                 state.gps.satellites_visible = int(msg.data.get("satellites_visible", 0))
@@ -75,7 +99,10 @@ async def _mavlink_loop(reader: MavlinkReader, state: TelemetryState) -> None:
             if "current_battery" in msg.data:
                 state.battery.current = float(msg.data.get("current_battery", 0)) / 100.0
             if "battery_remaining" in msg.data:
-                state.battery.remaining = float(msg.data.get("battery_remaining", 0))
+                # SYS_STATUS.battery_remaining can be -1 when unknown.
+                remaining = float(msg.data.get("battery_remaining", 0) or 0)
+                if 0.0 <= remaining <= 100.0:
+                    state.battery.remaining = remaining
             if "temperature" in msg.data:
                 raw_temperature = float(msg.data.get("temperature", 0))
                 if raw_temperature not in (-32768, 32767):

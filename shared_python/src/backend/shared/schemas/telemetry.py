@@ -34,7 +34,8 @@ class GPSData(BaseModel):
     lng: float
     alt: float  # MSL altitude in meters
     relative_alt: float | None = None
-    fix_type: int = Field(ge=0, le=5, description="0=no fix, 2=2D, 3=3D, 4=DGPS, 5=RTK")
+    # MAVLink GPS_FIX_TYPE enum ranges 0..8 (incl. 6=static, 7=PPP, 8=RTK fixed).
+    fix_type: int = Field(ge=0, le=8, description="MAVLink GPS fix type (0..8)")
     satellites_visible: int = 0
     hdop: float | None = None
     vdop: float | None = None
