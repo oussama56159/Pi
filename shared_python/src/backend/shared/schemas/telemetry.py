@@ -91,6 +91,10 @@ class TelemetryFrame(BaseModel):
     climb_rate: float = 0.0
     throttle: float = Field(ge=0, le=100)
 
+    # Preferred altitude for UI (typically relative/home altitude). When provided,
+    # the dashboard should use this over GPS MSL altitude.
+    altitude: float | None = None
+
     # Optional subsystems
     rc: RCChannels | None = None
     wind_speed: float | None = None

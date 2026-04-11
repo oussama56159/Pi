@@ -27,6 +27,8 @@ from backend.shared.database.mongo import init_mongo, close_mongo
 
 from backend.services.mission.mqtt_listener import start_mission_status_listener
 from backend.services.telemetry.mqtt_listener import start_telemetry_listener
+from backend.services.command.mqtt_listener import start_command_ack_listener
+from backend.services.alert.mqtt_listener import start_alert_listener
 from backend.services.auth.seed import ensure_auth_runtime_schema, ensure_owner_account
 from backend.shared.mqtt_runtime import close_mqtt
 
@@ -53,9 +55,11 @@ async def lifespan(app: FastAPI):
     # MQTT topic subscriptions (these return quickly after registering handlers)
     mission_task = asyncio.create_task(start_mission_status_listener())
     telemetry_task = asyncio.create_task(start_telemetry_listener())
+    command_task = asyncio.create_task(start_command_ack_listener())
+    alert_task = asyncio.create_task(start_alert_listener())
 
     yield
-    for task in (mission_task, telemetry_task):
+    for task in (mission_task, telemetry_task, command_task, alert_task):
         task.cancel()
     await close_mqtt()
     await close_redis()

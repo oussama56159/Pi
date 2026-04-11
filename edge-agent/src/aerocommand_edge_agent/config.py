@@ -30,6 +30,12 @@ class EdgeAgentSettings(BaseSettings):
     TELEMETRY_HZ: float = Field(default=2.0, gt=0)
     HEARTBEAT_HZ: float = Field(default=1.0, gt=0)
 
+    # Battery (optional)
+    # If the autopilot doesn't report battery remaining percent (-1/unknown),
+    # the agent can estimate it linearly from pack voltage.
+    BATTERY_VOLTAGE_EMPTY: float | None = Field(default=None, gt=0)
+    BATTERY_VOLTAGE_FULL: float | None = Field(default=None, gt=0)
+
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8",

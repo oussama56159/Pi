@@ -89,12 +89,13 @@ async def _cache_in_redis(frame: TelemetryFrame) -> None:
     """Cache latest telemetry snapshot in Redis for fast lookups."""
     try:
         redis = get_redis()
+        alt = frame.altitude if frame.altitude is not None else frame.gps.alt
         snapshot = TelemetrySnapshot(
             vehicle_id=frame.vehicle_id,
             timestamp=frame.timestamp,
             lat=frame.gps.lat,
             lng=frame.gps.lng,
-            alt=frame.gps.alt,
+            alt=alt,
             heading=frame.heading,
             groundspeed=frame.groundspeed,
             battery=frame.battery.remaining,
@@ -150,7 +151,8 @@ async def _sync_vehicle_state_from_frame(vehicle_id: str, frame: TelemetryFrame)
     try:
         mode = frame.system.mode.upper()
         armed = bool(frame.system.armed)
-        moving = frame.groundspeed > 0.5 or abs(frame.climb_rate) > 0.1 or frame.gps.alt > 0.5
+        alt = frame.altitude if frame.altitude is not None else frame.gps.alt
+        moving = frame.groundspeed > 0.5 or abs(frame.climb_rate) > 0.1 or alt > 0.5
 
         if armed:
             if mode == "LAND":
@@ -177,7 +179,7 @@ async def _sync_vehicle_state_from_frame(vehicle_id: str, frame: TelemetryFrame)
 
             vehicle.current_lat = frame.gps.lat
             vehicle.current_lng = frame.gps.lng
-            vehicle.current_alt = frame.gps.alt
+            vehicle.current_alt = alt
             vehicle.battery = frame.battery.remaining
             vehicle.gps_fix = frame.gps.fix_type
             vehicle.satellites = frame.gps.satellites_visible

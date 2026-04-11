@@ -46,4 +46,6 @@ aerocommand-edge-agent
 ## Notes
 
 - For Raspberry Pi serial access, add your user to `dialout` and ensure UART is enabled.
-- Command execution is stubbed in this initial version; it logs requests and sends ACK.
+- Command execution is implemented for MAVLink `COMMAND_LONG` payloads produced by the backend.
+  The agent sends the command to the autopilot and publishes `COMMAND_ACK` results back to
+  `aerocommand/{org_id}/command/{vehicle_id}/ack`.

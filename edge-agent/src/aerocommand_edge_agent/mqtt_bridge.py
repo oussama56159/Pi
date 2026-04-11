@@ -47,12 +47,15 @@ class MqttBridge:
         self.mission_status_topic = MQTTTopics.mission_status(org_id, vehicle_id)
         self.mission_progress_topic = MQTTTopics.mission_progress(org_id, vehicle_id)
 
+        self.alert_system_topic = MQTTTopics.alert_system(org_id, vehicle_id)
+
     async def run(
         self,
         *,
         telemetry_state: TelemetryState,
         telemetry_interval_s: float,
         heartbeat_interval_s: float,
+        system_alert_queue: asyncio.Queue | None = None,
         on_command_request: callable | None = None,
         on_mission_upload: callable | None = None,
         on_mission_download_request: callable | None = None,
@@ -91,29 +94,50 @@ class MqttBridge:
                     await client.publish(self.heartbeat_topic, payload, qos=self.qos)
                     await asyncio.sleep(heartbeat_interval_s)
 
+            async def publish_system_alerts() -> None:
+                if system_alert_queue is None:
+                    # keep task lightweight
+                    while True:
+                        await asyncio.sleep(3600)
+
+                while True:
+                    alert = await system_alert_queue.get()
+                    if not isinstance(alert, dict):
+                        continue
+                    await publish_json(self.alert_system_topic, alert)
+
             async def handle_messages() -> None:
                 async for message in client.messages:
                     topic = message.topic.value
 
                     if topic == self.command_request_topic:
-                        # Initial stub: ACK immediately. A full implementation would translate
-                        # the request into MAVLink COMMAND_LONG/MISSION* messages.
-                        ack = CommandAck(
-                            command_id="unknown",
-                            vehicle_id=self.vehicle_id,
-                            status=CommandStatus.ACKNOWLEDGED,
-                            result_code=0,
-                            message="Received by edge agent",
-                            timestamp=datetime.now(tz=timezone.utc),
-                        )
-                        await client.publish(self.command_ack_topic, orjson.dumps(ack.model_dump(mode="json")), qos=self.qos)
-
                         if on_command_request is not None:
                             try:
-                                await on_command_request(message)
+                                await on_command_request(message.payload, publish_json)
                             except Exception:
                                 # swallow errors so we keep the bridge alive
                                 pass
+                        else:
+                            # Fallback: ACK receipt only.
+                            try:
+                                data = orjson.loads(message.payload)
+                                command_id = str(data.get("command_id") or "unknown")
+                            except Exception:
+                                command_id = "unknown"
+
+                            ack = CommandAck(
+                                command_id=command_id,
+                                vehicle_id=self.vehicle_id,
+                                status=CommandStatus.ACKNOWLEDGED,
+                                result_code=0,
+                                message="Received by edge agent (no handler)",
+                                timestamp=datetime.now(tz=timezone.utc),
+                            )
+                            await client.publish(
+                                self.command_ack_topic,
+                                orjson.dumps(ack.model_dump(mode="json")),
+                                qos=self.qos,
+                            )
                         continue
 
                     if topic == self.mission_upload_topic:
@@ -134,4 +158,4 @@ class MqttBridge:
                                 pass
                         continue
 
-            await asyncio.gather(publish_telemetry(), publish_heartbeat(), handle_messages())
+            await asyncio.gather(publish_telemetry(), publish_heartbeat(), publish_system_alerts(), handle_messages())
