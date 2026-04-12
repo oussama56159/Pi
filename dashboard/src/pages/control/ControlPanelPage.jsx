@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ShieldCheck, ShieldOff, Plane, ArrowDownToLine, RotateCcw, OctagonX,
   Gauge, Radio, Gamepad2, AlertTriangle, ChevronDown,
@@ -55,6 +55,10 @@ export default function ControlPanelPage() {
 
   const activeMission = effectiveSelectedId ? getActiveMissionForVehicle(effectiveSelectedId) : null;
 
+  // Tracks the GPS position where TAKEOFF was initiated (per vehicle).
+  // Used to implement: 1st TAKEOFF => climb to ~1m, 2nd TAKEOFF => return to takeoff point.
+  const takeoffOriginRef = useRef({});
+
   useMissionStream(effectiveSelectedId);
 
   const vehicle = activeVehicles.find((v) => v.id === effectiveSelectedId);
@@ -66,6 +70,46 @@ export default function ControlPanelPage() {
 
   const handleSend = async (cmd) => {
     if (!effectiveSelectedId) return;
+
+    if (cmd === COMMANDS.TAKEOFF) {
+      const existingOrigin = takeoffOriginRef.current[effectiveSelectedId];
+      const isArmed = Boolean(vehicle?.armed ?? t?.armed);
+
+      // If already airborne/armed and we have an origin, treat TAKEOFF as "return to takeoff point".
+      if (existingOrigin && isArmed) {
+        await sendCommand(effectiveSelectedId, {
+          command: COMMANDS.GOTO,
+          params: {
+            lat: existingOrigin.lat,
+            lng: existingOrigin.lng,
+            // Keep current altitude (safer across autopilots/altitude frames).
+            alt: -1,
+          },
+        });
+        addToast({
+          type: 'success',
+          title: 'Command Sent',
+          message: `RETURN TO TAKEOFF POINT sent to ${vehicle?.name || 'vehicle'}`,
+        });
+        return;
+      }
+
+      // First TAKEOFF: record origin if we have a valid GPS fix.
+      const lat = Number(t?.lat ?? t?.gps?.lat);
+      const lng = Number(t?.lng ?? t?.gps?.lng);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        takeoffOriginRef.current[effectiveSelectedId] = { lat, lng };
+      }
+
+      await sendCommand(effectiveSelectedId, { command: cmd, params: { altitude: 1.0 } });
+      addToast({
+        type: 'success',
+        title: 'Command Sent',
+        message: `${String(cmd).replace(/_/g, ' ').toUpperCase()} sent to ${vehicle?.name || 'vehicle'}`,
+      });
+      return;
+    }
+
     await sendCommand(effectiveSelectedId, { command: cmd });
     addToast({
       type: 'success',

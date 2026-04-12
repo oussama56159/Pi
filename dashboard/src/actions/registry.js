@@ -125,7 +125,7 @@ export const ACTIONS = {
   },
   'control.command.takeoff': {
     name: 'Takeoff',
-    description: 'Initiate autonomous takeoff to a predefined altitude.',
+    description: 'Initiate autonomous takeoff to ~1 meter and hold position awaiting new commands.',
     purpose: 'Start flight safely using autopilot takeoff logic.',
     category: 'control',
     functionalImpact: 'Vehicle lifts off and climbs.',
@@ -140,7 +140,7 @@ export const ACTIONS = {
     dependencies: ['Autopilot mode support', 'Telemetry link'],
     permissionsRequired: [ROLES.PILOT, ROLES.ADMIN, ROLES.SUPER_ADMIN],
     reversible: 'partially_reversible',
-    confirmation: { required: true, style: 'danger', prompt: 'Takeoff now?' },
+    confirmation: { required: true, style: 'danger', prompt: 'Execute takeoff / return to takeoff point?' },
     logging: { required: true, level: 'warning', auditTrail: true, includePayload: true },
     realtimeEffect: 'vehicle',
     missionEffect: 'mission',

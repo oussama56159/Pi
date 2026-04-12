@@ -180,7 +180,9 @@ def _build_mavlink_command(data: CommandRequest) -> MAVLinkCommand | None:
     elif data.command == CommandType.DISARM:
         cmd.param1 = 0
     elif data.command == CommandType.TAKEOFF:
-        cmd.param7 = data.params.get("altitude", 10.0)
+        # Default to a low, safe hover takeoff height unless overridden.
+        # MAV_CMD_NAV_TAKEOFF uses param7 as the target altitude in meters.
+        cmd.param7 = float(data.params.get("altitude", 1.0))
     elif data.command == CommandType.GOTO:
         cmd.param5 = data.params.get("lat", 0)
         cmd.param6 = data.params.get("lng", 0)
