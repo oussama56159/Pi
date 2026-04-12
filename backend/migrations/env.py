@@ -10,11 +10,11 @@ from sqlalchemy import engine_from_config, pool
 from backend.shared.database.postgres import PostgresBase
 
 # Import ALL models so they register with PostgresBase.metadata
-from backend.services.auth.models import User, Organization, APIKey  # noqa: F401
-from backend.services.fleet.models import Fleet, Vehicle, FleetUserAssignment  # noqa: F401
-from backend.services.mission.models import Mission, Waypoint, MissionAssignment  # noqa: F401
+from backend.services.alert.models import Alert, AlertRuleRecord, GeofenceZoneRecord  # noqa: F401
+from backend.services.auth.models import APIKey, Organization, User  # noqa: F401
 from backend.services.command.models import CommandRecord  # noqa: F401
-from backend.services.alert.models import Alert, GeofenceZoneRecord, AlertRuleRecord  # noqa: F401
+from backend.services.fleet.models import Fleet, FleetUserAssignment, Vehicle  # noqa: F401
+from backend.services.mission.models import Mission, MissionAssignment, Waypoint  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

@@ -9,6 +9,7 @@ on:
 env:
   KUBE_NAMESPACE: aerocommand
   REGISTRY: ghcr.io/${{ github.repository_owner }}
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
   # ── Deploy to Staging (develop branch) ──

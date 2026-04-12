@@ -1,2 +1,2 @@
-"""Alert Service – rule engine, geofence monitoring, notifications."""
+"""Alert Service - rule engine, geofence monitoring, notifications."""
 

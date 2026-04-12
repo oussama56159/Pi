@@ -2,10 +2,10 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Enum, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.dialects.postgresql import ARRAY, JSON, UUID
+from sqlalchemy import Boolean, DateTime, Enum, Float, Integer, String, Text
+from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.shared.database.postgres import PostgresBase
@@ -30,7 +30,7 @@ class Alert(PostgresBase):
     resolved: Mapped[bool] = mapped_column(Boolean, default=False)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
 class GeofenceZoneRecord(PostgresBase):
@@ -46,7 +46,7 @@ class GeofenceZoneRecord(PostgresBase):
     action: Mapped[str] = mapped_column(String(20), default="alert")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 
 
 class AlertRuleRecord(PostgresBase):
@@ -62,5 +62,5 @@ class AlertRuleRecord(PostgresBase):
     cooldown_seconds: Mapped[int] = mapped_column(Integer, default=300)
     notification_channels: Mapped[list] = mapped_column(JSON, default=list)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
 

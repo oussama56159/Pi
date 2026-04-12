@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from uuid import uuid4
 
-from backend.shared.mqtt_runtime import get_mqtt
-from backend.services.telemetry.websocket_manager import ws_manager
 from backend.services.telemetry.service import _get_vehicle_org_id
+from backend.services.telemetry.websocket_manager import ws_manager
+from backend.shared.mqtt_runtime import get_mqtt
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ async def start_alert_listener() -> None:
             "vehicle_id": str(payload.get("vehicle_id") or vehicle_id),
             "severity": str(payload.get("severity") or "info"),
             "message": str(payload.get("message") or ""),
-            "timestamp": str(payload.get("timestamp") or datetime.now(tz=timezone.utc).isoformat()),
+            "timestamp": str(payload.get("timestamp") or datetime.now(UTC).isoformat()),
             "category": str(payload.get("category") or sub),
             **({"source": payload.get("source")} if payload.get("source") else {}),
         }
