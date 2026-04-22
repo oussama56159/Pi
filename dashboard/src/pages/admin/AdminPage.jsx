@@ -10,10 +10,9 @@ import Badge from '@/components/ui/Badge';
 const systemHealth = [
   { name: 'API Server', status: 'healthy', uptime: '99.97%', latency: '12ms', icon: Server },
   { name: 'PostgreSQL', status: 'healthy', uptime: '99.99%', latency: '3ms', icon: Database },
-  { name: 'MongoDB', status: 'healthy', uptime: '99.95%', latency: '5ms', icon: Database },
-  { name: 'Redis Cache', status: 'healthy', uptime: '100%', latency: '0.8ms', icon: Cpu },
+  { name: 'In-Memory Cache', status: 'healthy', uptime: '100%', latency: '0.1ms', icon: Cpu },
   { name: 'MQTT Broker', status: 'healthy', uptime: '99.98%', latency: '2ms', icon: Activity },
-  { name: 'WebSocket Gateway', status: 'warning', uptime: '99.90%', latency: '15ms', icon: Activity },
+  { name: 'WebSocket Gateway', status: 'healthy', uptime: '99.90%', latency: '15ms', icon: Activity },
 ];
 
 const auditLogs = [

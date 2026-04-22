@@ -11,10 +11,8 @@ from __future__ import annotations
 
 import logging
 import math
-from datetime import datetime, timezone
 
-from backend.shared.database.redis import RedisKeys, get_redis
-from backend.shared.schemas.alert import AlertCategory, AlertSeverity, GeofenceZone
+from backend.shared.schemas.alert import GeofenceZone
 from backend.shared.schemas.telemetry import TelemetryFrame
 
 logger = logging.getLogger(__name__)

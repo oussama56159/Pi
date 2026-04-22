@@ -1,0 +1,123 @@
+Metadata-Version: 2.4
+Name: aerocommand-edge-agent
+Version: 0.1.0
+Summary: AeroCommand Raspberry Pi edge agent (MAVLink ↔ MQTT bridge).
+License: Proprietary
+Requires-Python: <3.13,>=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: aerocommand-shared>=0.1.0
+Requires-Dist: pydantic>=2.6
+Requires-Dist: pydantic-settings>=2.2
+Requires-Dist: aiomqtt>=2.0
+Requires-Dist: orjson>=3.9
+Requires-Dist: pymavlink>=2.4
+Provides-Extra: camera
+Requires-Dist: opencv-contrib-python-headless>=4.10; extra == "camera"
+
+# AeroCommand Edge Agent (Raspberry Pi)
+
+This agent runs on a Raspberry Pi (or any Linux host) connected to a Pixhawk/autopilot.
+It bridges **MAVLink telemetry** to **cloud MQTT** and listens for **cloud commands**.
+
+## What it does
+
+- Reads MAVLink messages from Pixhawk (`SERIAL`, `UDP`, or `TCP`)
+- Publishes telemetry frames to MQTT topic:
+  - `aerocommand/{org_id}/telemetry/{vehicle_id}/raw`
+- Publishes heartbeat to:
+  - `aerocommand/{org_id}/telemetry/{vehicle_id}/heartbeat`
+- Subscribes to command requests:
+  - `aerocommand/{org_id}/command/{vehicle_id}/request`
+- Responds with acknowledgements:
+  - `aerocommand/{org_id}/command/{vehicle_id}/ack`
+- Can watch a local capture directory and upload images/videos to the backend vision API.
+- Can run ArUco-assisted precision landing with a separate `precision_land` command and fall back to standard LAND when the marker is unavailable.
+- Can watch a live camera feed and save plant-like frames into the capture directory only when the green-content trigger fires.
+
+## Install (dev)
+
+From repo root:
+
+```bash
+pip install -e ./shared_python
+pip install -e ./edge-agent
+# Or, if you want camera MJPEG streaming via pip-installed OpenCV:
+# pip install -e "./edge-agent[camera]"
+```
+
+## Run
+
+Set environment variables (example):
+
+```bash
+export ORG_ID="demo"
+export VEHICLE_ID="vehicle-01"
+export MAVLINK_CONNECTION="/dev/ttyAMA0"
+export MAVLINK_BAUD="57600"
+export MQTT_HOST="localhost"
+export MQTT_PORT="1883"
+
+# Optional: used as vehicle callsign when auto-registering in the backend.
+# If not set, defaults to the device hostname.
+# export CALLSIGN="drone-01"
+
+# Camera MJPEG streaming (served by the edge-agent over HTTP)
+# Default: enabled (can be disabled by setting CAMERA_STREAM_ENABLED=false)
+export CAMERA_STREAM_ENABLED="true"
+export CAMERA_STREAM_HOST="0.0.0.0"
+export CAMERA_STREAM_PORT="8090"
+export CAMERA_STREAM_PATH="/mjpeg"
+# Optional: restrict access with a token (?token=...)
+# export CAMERA_STREAM_TOKEN="change-me"
+
+# Optional: override the stream URL advertised in heartbeat messages.
+# Useful if the edge-agent is behind NAT or you have a reverse proxy.
+# export CAMERA_STREAM_PUBLIC_URL="http://drone-01.local:8090/mjpeg"
+
+# Capture source
+export CAMERA_STREAM_CAMERA_INDEX="0"
+# Or stream from another source and re-serve as MJPEG:
+# export CAMERA_STREAM_CAMERA_URL="rtsp://user:pass@192.168.1.50:554/stream"
+export VISION_API_BASE_URL="http://localhost:8000/api/v1"
+export VISION_UPLOAD_TOKEN="your-vision-upload-token"
+export VISION_CAPTURE_DIR="/data/captures"
+export VISION_UPLOAD_SUBJECT_TYPE="plant"
+export VISION_UPLOAD_CAPTURE_REASON="plant_trigger"
+export VISION_UPLOAD_MEDIA_TYPE="image"
+export VISION_UPLOAD_MISSION_TYPE="farm_surveillance"
+export VISION_LIVE_CAPTURE_ENABLED="true"
+export VISION_LIVE_CAMERA_INDEX="0"
+export VISION_LIVE_FRAME_WIDTH="640"
+export VISION_LIVE_FRAME_HEIGHT="360"
+export VISION_LIVE_GREEN_RATIO_THRESHOLD="0.12"
+export VISION_LIVE_MIN_GREEN_PIXELS="1200"
+export VISION_LIVE_CAPTURE_COOLDOWN_S="8"
+export PRECISION_LANDING_CAMERA_INDEX="0"
+export PRECISION_LANDING_MARKER_SIZE_M="0.18"
+export PRECISION_LANDING_DICTIONARY="DICT_4X4_50"
+export PRECISION_LANDING_CAMERA_MATRIX_JSON='[[1200.0,0.0,640.0],[0.0,1200.0,360.0],[0.0,0.0,1.0]]'
+export PRECISION_LANDING_DIST_COEFFS_JSON='[0.0,0.0,0.0,0.0,0.0]'
+```
+
+Run:
+
+```bash
+aerocommand-edge-agent
+```
+
+## Notes
+
+- For Raspberry Pi serial access, add your user to `dialout` and ensure UART is enabled.
+- Command execution is implemented for MAVLink `COMMAND_LONG` payloads produced by the backend.
+  The agent sends the command to the autopilot and publishes `COMMAND_ACK` results back to
+  `aerocommand/{org_id}/command/{vehicle_id}/ack`.
+- Vision uploads are optional. If `VISION_CAPTURE_DIR` and `VISION_API_BASE_URL` are set,
+  the agent watches the capture directory and forwards stable files to the backend vision API.
+- Live plant capture is optional. If `VISION_LIVE_CAPTURE_ENABLED=true`, the agent first sends a
+  frame to the backend `/api/v1/vision/inspect` endpoint and writes a still image into
+  `VISION_CAPTURE_DIR` only when the backend recommends capture. If the backend inspect call fails,
+  the agent falls back to the local green-content heuristic.
+- Precision landing is optional. It only runs when the `precision_land` command is dispatched;
+  otherwise the standard `land` command remains the default landing path.
+- ArUco precision landing works best with a calibrated camera and OpenCV available (`cv2`).
+  You can install it via pip extras (`./edge-agent[camera]`) or via your OS packages (e.g. `python3-opencv`).

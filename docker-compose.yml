@@ -23,36 +23,6 @@ services:
       timeout: 5s
       retries: 5
 
-  mongo:
-    image: mongo:7
-    container_name: aero-mongo
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: aerocommand
-      MONGO_INITDB_ROOT_PASSWORD: aerocommand_secret
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    healthcheck:
-      test: ["CMD", "mongosh", "--username", "aerocommand", "--password", "aerocommand_secret", "--authenticationDatabase", "admin", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: aero-redis
-    command: redis-server --requirepass aerocommand_redis_secret --maxmemory 256mb --maxmemory-policy allkeys-lru
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "aerocommand_redis_secret", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   # ── MQTT Broker ──
   emqx:
     image: emqx/emqx:5.5
@@ -90,14 +60,6 @@ services:
       POSTGRES_USER: aerocommand
       POSTGRES_PASSWORD: aerocommand_secret
       POSTGRES_DB: aerocommand
-      MONGO_HOST: mongo
-      MONGO_PORT: "27017"
-      MONGO_USER: aerocommand
-      MONGO_PASSWORD: aerocommand_secret
-      MONGO_DB: aerocommand_telemetry
-      REDIS_HOST: redis
-      REDIS_PORT: "6379"
-      REDIS_PASSWORD: aerocommand_redis_secret
       MQTT_BROKER_HOST: emqx
       MQTT_BROKER_PORT: "1883"
       JWT_SECRET_KEY: dev_jwt_secret_change_in_production
@@ -129,10 +91,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      mongo:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
       emqx:
         condition: service_healthy
     command: >
@@ -161,8 +119,6 @@ services:
 
 volumes:
   pg_data:
-  mongo_data:
-  redis_data:
   emqx_data:
 
 networks:

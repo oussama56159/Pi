@@ -1,9 +1,9 @@
 """
 Telemetry processing pipeline.
 Receives raw telemetry from MQTT, processes it, and distributes to:
-  1. MongoDB – time-series persistence
-  2. Redis – latest snapshot cache
-  3. WebSocket – real-time dashboard push
+    1. PostgreSQL – time-series persistence
+    2. In-memory cache – latest snapshot and heartbeat state
+    3. WebSocket – real-time dashboard push
 """
 from __future__ import annotations
 
@@ -11,12 +11,12 @@ import logging
 from datetime import datetime, timezone
 from uuid import UUID
 
-from backend.shared.database.mongo import get_mongo_db
-from backend.shared.database.redis import RedisKeys, get_redis
 from backend.shared.database.postgres import get_direct_postgres_session, get_postgres_session
+from backend.shared.runtime_cache import get_runtime_cache
 from backend.shared.schemas.telemetry import TelemetryFrame, TelemetrySnapshot
 
 from backend.services.fleet.models import Vehicle
+from backend.services.telemetry.models import TelemetryHistoryRecord
 from backend.shared.schemas.vehicle import VehicleStatus
 from sqlalchemy import select
 
@@ -66,29 +66,34 @@ async def process_telemetry(vehicle_id: str, payload: dict) -> None:
     import asyncio
     await asyncio.gather(
         _sync_vehicle_state_from_frame(vehicle_id, frame),
-        _store_in_mongodb(frame),
-        _cache_in_redis(frame),
+        _store_in_postgres(frame),
+        _cache_in_memory(frame),
         _broadcast_via_websocket(vehicle_id, frame),
         return_exceptions=True,
     )
 
 
-async def _store_in_mongodb(frame: TelemetryFrame) -> None:
-    """Persist telemetry frame to MongoDB time-series collection."""
+async def _store_in_postgres(frame: TelemetryFrame) -> None:
+    """Persist telemetry frame to PostgreSQL time-series table."""
     try:
-        db = get_mongo_db()
-        collection = db["telemetry"]
-        doc = frame.model_dump()
-        doc["timestamp"] = frame.timestamp
-        await collection.insert_one(doc)
+        org_id = await _get_vehicle_org_id(frame.vehicle_id)
+        record = TelemetryHistoryRecord(
+            vehicle_id=UUID(frame.vehicle_id),
+            organization_id=UUID(org_id) if org_id else None,
+            timestamp=frame.timestamp,
+            payload=frame.model_dump(mode="json"),
+        )
+        db = await get_direct_postgres_session()
+        async with db:
+            db.add(record)
+            await db.commit()
     except Exception as e:
-        logger.error(f"MongoDB write failed for {frame.vehicle_id}: {e}")
+        logger.error(f"PostgreSQL write failed for {frame.vehicle_id}: {e}")
 
 
-async def _cache_in_redis(frame: TelemetryFrame) -> None:
-    """Cache latest telemetry snapshot in Redis for fast lookups."""
+async def _cache_in_memory(frame: TelemetryFrame) -> None:
+    """Cache latest telemetry snapshot in memory for fast lookups."""
     try:
-        redis = get_redis()
         alt = frame.altitude if frame.altitude is not None else frame.gps.alt
         snapshot = TelemetrySnapshot(
             vehicle_id=frame.vehicle_id,
@@ -105,13 +110,13 @@ async def _cache_in_redis(frame: TelemetryFrame) -> None:
             satellites=frame.gps.satellites_visible,
             gps_fix=frame.gps.fix_type,
         )
-        await redis.hset(
-            RedisKeys.telemetry(frame.vehicle_id),
-            mapping={k: str(v) for k, v in snapshot.model_dump().items()},
+        get_runtime_cache().store_telemetry_snapshot(
+            frame.vehicle_id,
+            snapshot.model_dump(),
+            ttl_seconds=300,
         )
-        await redis.expire(RedisKeys.telemetry(frame.vehicle_id), 300)  # 5-min TTL
     except Exception as e:
-        logger.error(f"Redis cache failed for {frame.vehicle_id}: {e}")
+        logger.error(f"In-memory cache failed for {frame.vehicle_id}: {e}")
 
 
 async def _broadcast_via_websocket(vehicle_id: str, frame: TelemetryFrame) -> None:
@@ -128,17 +133,9 @@ async def process_heartbeat(vehicle_id: str, payload: dict) -> None:
     """Process heartbeat message – update vehicle online status."""
     try:
         heartbeat_connected = bool(payload.get("connected", True))
-        redis = get_redis()
-        await redis.setex(
-            RedisKeys.heartbeat(vehicle_id),
-            30,  # 30-second TTL – if heartbeat stops, key expires
-            datetime.now(timezone.utc).isoformat(),
-        )
-        await redis.setex(
-            RedisKeys.vehicle_status(vehicle_id),
-            60,
-            "online" if heartbeat_connected else "offline",
-        )
+        cache = get_runtime_cache()
+        cache.set_heartbeat(vehicle_id, datetime.now(timezone.utc).isoformat(), ttl_seconds=30)
+        cache.set_vehicle_status(vehicle_id, "online" if heartbeat_connected else "offline", ttl_seconds=60)
 
         if heartbeat_connected:
             await _sync_vehicle_online_state(vehicle_id)
@@ -213,29 +210,30 @@ async def _sync_vehicle_online_state(vehicle_id: str) -> None:
 async def get_telemetry_history(
     vehicle_id: str, start_time: datetime, end_time: datetime, resolution: str = "1s",
 ) -> list[dict]:
-    """Query telemetry history from MongoDB."""
+    """Query telemetry history from PostgreSQL."""
     try:
-        db = get_mongo_db()
-        collection = db["telemetry"]
-        cursor = collection.find(
-            {
-                "vehicle_id": vehicle_id,
-                "timestamp": {"$gte": start_time, "$lte": end_time},
-            },
-            {"_id": 0},
-        ).sort("timestamp", 1)
-        return await cursor.to_list(length=10000)
+        db = await get_direct_postgres_session()
+        async with db:
+            result = await db.execute(
+                select(TelemetryHistoryRecord.payload)
+                .where(
+                    TelemetryHistoryRecord.vehicle_id == UUID(vehicle_id),
+                    TelemetryHistoryRecord.timestamp >= start_time,
+                    TelemetryHistoryRecord.timestamp <= end_time,
+                )
+                .order_by(TelemetryHistoryRecord.timestamp.asc())
+                .limit(10000)
+            )
+            return list(result.scalars().all())
     except Exception as e:
         logger.error(f"Telemetry history query failed: {e}")
         return []
 
 
 async def get_latest_snapshot(vehicle_id: str) -> dict | None:
-    """Get latest telemetry snapshot from Redis."""
+    """Get latest telemetry snapshot from in-memory cache."""
     try:
-        redis = get_redis()
-        data = await redis.hgetall(RedisKeys.telemetry(vehicle_id))
-        return data if data else None
+        return get_runtime_cache().get_telemetry_snapshot(vehicle_id)
     except Exception:
         return None
 

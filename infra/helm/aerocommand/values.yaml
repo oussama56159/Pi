@@ -39,9 +39,6 @@ secrets:
   create: true
   POSTGRES_USER: aerocommand
   POSTGRES_PASSWORD: CHANGE_ME_IN_PRODUCTION
-  MONGO_USER: aerocommand
-  MONGO_PASSWORD: CHANGE_ME_IN_PRODUCTION
-  REDIS_PASSWORD: CHANGE_ME_IN_PRODUCTION
   JWT_SECRET_KEY: CHANGE_ME_IN_PRODUCTION
   MQTT_USERNAME: aerocommand
   MQTT_PASSWORD: CHANGE_ME_IN_PRODUCTION
@@ -108,21 +105,4 @@ postgresql:
   primary:
     persistence:
       size: 20Gi
-
-mongodb:
-  enabled: true
-  auth:
-    rootUser: aerocommand
-    existingSecret: aerocommand-secrets
-  persistence:
-    size: 50Gi
-
-redis:
-  enabled: true
-  auth:
-    existingSecret: aerocommand-secrets
-    existingSecretPasswordKey: REDIS_PASSWORD
-  master:
-    persistence:
-      size: 2Gi
 

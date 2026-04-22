@@ -15,6 +15,7 @@ from backend.services.auth.models import APIKey, Organization, User  # noqa: F40
 from backend.services.command.models import CommandRecord  # noqa: F401
 from backend.services.fleet.models import Fleet, FleetUserAssignment, Vehicle  # noqa: F401
 from backend.services.mission.models import Mission, MissionAssignment, Waypoint  # noqa: F401
+from backend.services.telemetry.models import TelemetryHistoryRecord  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

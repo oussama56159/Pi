@@ -67,6 +67,7 @@ async def ensure_schema() -> None:
     from backend.services.mission import models as _mission_models  # noqa: F401
     from backend.services.command import models as _command_models  # noqa: F401
     from backend.services.alert import models as _alert_models  # noqa: F401
+    from backend.services.telemetry import models as _telemetry_models  # noqa: F401
 
     async with _engine.begin() as conn:
         await conn.run_sync(PostgresBase.metadata.create_all)

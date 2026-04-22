@@ -21,7 +21,7 @@ import Card, { CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import ActionButton from '@/components/actions/ActionButton';
 import Button from '@/components/ui/Button';
 import Badge from '@/components/ui/Badge';
-import Input from '@/components/ui/Input';
+import Input, { Select } from '@/components/ui/Input';
 import Modal from '@/components/ui/Modal';
 import { useMissionStore } from '@/stores/missionStore';
 import { useFleetStore } from '@/stores/fleetStore';
@@ -62,6 +62,90 @@ const DEFAULT_GRID_PARAMS = {
   turnaround: 'inside_only',
   altitude: 100,
 };
+
+const WAYPOINT_ACTIONS = [
+  { value: 'NAV_WAYPOINT', label: 'Waypoint', hint: 'Navigate to this point' },
+  { value: 'NAV_LOITER_TIME', label: 'Loiter / dwell', hint: 'Hold position for a time' },
+  { value: 'NAV_TAKEOFF', label: 'Takeoff', hint: 'Climb and continue' },
+  { value: 'NAV_LAND', label: 'Land', hint: 'Land at this point' },
+  { value: 'NAV_RETURN_TO_LAUNCH', label: 'RTL', hint: 'Return to launch' },
+  { value: 'DO_SET_CAM_TRIGG_DIST', label: 'Take photo / camera trigger', hint: 'Trigger the camera near this point' },
+];
+
+function toFiniteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function formatDegrees(value) {
+  return `${Math.round((toFiniteNumber(value, 0) % 360 + 360) % 360)}°`;
+}
+
+function formatSeconds(value) {
+  const seconds = Math.max(0, Math.round(toFiniteNumber(value, 0)));
+  return `${seconds}s`;
+}
+
+function waypointActionLabel(command) {
+  return WAYPOINT_ACTIONS.find((action) => action.value === command)?.label || command || 'Waypoint';
+}
+
+function computeBearingDegrees(from, to) {
+  const lat1 = (toFiniteNumber(from?.lat) * Math.PI) / 180;
+  const lat2 = (toFiniteNumber(to?.lat) * Math.PI) / 180;
+  const deltaLng = ((toFiniteNumber(to?.lng) - toFiniteNumber(from?.lng)) * Math.PI) / 180;
+  const y = Math.sin(deltaLng) * Math.cos(lat2);
+  const x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(deltaLng);
+  const bearing = (Math.atan2(y, x) * 180) / Math.PI;
+  return (bearing + 360) % 360;
+}
+
+function waypointSummary(wp) {
+  const pieces = [waypointActionLabel(wp.command)];
+  const dwell = toFiniteNumber(wp.param1, 0);
+  const targetSeq = Math.round(toFiniteNumber(wp.param2, 0));
+  const heading = toFiniteNumber(wp.param4, 0);
+
+  if (dwell > 0) {
+    pieces.push(`Stay ${formatSeconds(dwell)}`);
+  }
+
+  if (targetSeq > 0) {
+    pieces.push(`Look at WP ${targetSeq}`);
+  }
+
+  if (Number.isFinite(heading)) {
+    pieces.push(`Heading ${formatDegrees(heading)}`);
+  }
+
+  return pieces.join(' · ');
+}
+
+function normalizeGeofencePoints(source) {
+  if (!Array.isArray(source)) return [];
+
+  return source
+    .map((point) => {
+      if (Array.isArray(point) && point.length >= 2) {
+        const first = Number(point[0]);
+        const second = Number(point[1]);
+        if (!Number.isFinite(first) || !Number.isFinite(second)) {
+          return { lat: Number.NaN, lng: Number.NaN };
+        }
+
+        // Most of the app uses [lat, lng]. If a pair looks like [lng, lat], flip it.
+        if (Math.abs(first) > 90 && Math.abs(second) <= 90) {
+          return { lat: second, lng: first };
+        }
+        return { lat: first, lng: second };
+      }
+
+      const lat = Number(point?.lat ?? point?.latitude);
+      const lng = Number(point?.lng ?? point?.lon ?? point?.longitude);
+      return { lat, lng };
+    })
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+}
 
 function createWaypointIcon(index, { selected = false } = {}) {
   return L.divIcon({
@@ -293,6 +377,7 @@ function WaypointListItem({ wp, index, selected, onSelect, onRemove }) {
           <span className="truncate">{Number(wp.lat).toFixed(5)}, {Number(wp.lng).toFixed(5)}</span>
           <span className="shrink-0">{Math.round(Number(wp.alt) || 0)}m · {(wp.altitude_mode || 'relative') === 'terrain' ? 'Terrain' : 'Relative'}</span>
         </div>
+        <div className="mt-1 text-[11px] text-slate-400 truncate">{waypointSummary(wp)}</div>
       </button>
       <button
         type="button"
@@ -306,16 +391,71 @@ function WaypointListItem({ wp, index, selected, onSelect, onRemove }) {
   );
 }
 
-function SelectedWaypointEditor({ wp, index, onUpdate, onRemove }) {
+function SelectedWaypointEditor({ wp, index, allWaypoints, onUpdate, onRemove }) {
   const [latText, setLatText] = useState(() => (wp?.lat === null || wp?.lat === undefined ? '' : String(wp.lat)));
   const [lngText, setLngText] = useState(() => (wp?.lng === null || wp?.lng === undefined ? '' : String(wp.lng)));
   const [altText, setAltText] = useState(() => (wp?.alt === null || wp?.alt === undefined ? '' : String(wp.alt)));
+  const [dwellText, setDwellText] = useState(() => (wp?.param1 === null || wp?.param1 === undefined ? '' : String(wp.param1)));
+  const [targetSeqText, setTargetSeqText] = useState(() => (wp?.param2 === null || wp?.param2 === undefined ? '' : String(wp.param2)));
+  const [headingText, setHeadingText] = useState(() => (wp?.param4 === null || wp?.param4 === undefined ? '' : String(wp.param4)));
+
+  useEffect(() => {
+    setLatText(wp?.lat === null || wp?.lat === undefined ? '' : String(wp.lat));
+    setLngText(wp?.lng === null || wp?.lng === undefined ? '' : String(wp.lng));
+    setAltText(wp?.alt === null || wp?.alt === undefined ? '' : String(wp.alt));
+    setDwellText(wp?.param1 === null || wp?.param1 === undefined ? '' : String(wp.param1));
+    setTargetSeqText(wp?.param2 === null || wp?.param2 === undefined ? '' : String(wp.param2));
+    setHeadingText(wp?.param4 === null || wp?.param4 === undefined ? '' : String(wp.param4));
+  }, [wp?.alt, wp?.id, wp?.lat, wp?.lng, wp?.param1, wp?.param2, wp?.param4]);
 
   const commitNumber = (raw, fallback) => {
     if (raw === '') return fallback;
     const num = Number(raw);
     if (!Number.isFinite(num)) return fallback;
     return num;
+  };
+
+  const targetOptions = [
+    { value: '0', label: 'No target' },
+    ...allWaypoints
+      .filter((candidate) => candidate.id !== wp?.id)
+      .map((candidate) => ({
+        value: String(candidate.seq + 1),
+        label: `WP ${candidate.seq + 1}`,
+      })),
+  ];
+
+  useEffect(() => {
+    if (!wp || !targetSeqText) return;
+
+    const targetSeq = Number(targetSeqText);
+    if (!Number.isFinite(targetSeq) || targetSeq <= 0) return;
+
+    const targetWaypoint = allWaypoints.find((candidate) => candidate.seq + 1 === targetSeq);
+    if (!targetWaypoint) return;
+
+    const bearing = Math.round(computeBearingDegrees(wp, targetWaypoint) * 10) / 10;
+    if (toFiniteNumber(headingText, null) !== bearing) {
+      setHeadingText(String(bearing));
+    }
+    if (toFiniteNumber(wp.param4, null) !== bearing) {
+      onUpdate(wp.id, { param4: bearing });
+    }
+  }, [allWaypoints, headingText, onUpdate, targetSeqText, wp]);
+
+  const applyTargetSelection = (rawValue) => {
+    const targetSeq = Number(rawValue) || 0;
+    setTargetSeqText(targetSeq ? String(targetSeq) : '');
+
+    if (!targetSeq || !wp) {
+      onUpdate(wp.id, { param2: 0 });
+      return;
+    }
+
+    const targetWaypoint = allWaypoints.find((candidate) => candidate.seq + 1 === targetSeq);
+    const heading = targetWaypoint ? computeBearingDegrees(wp, targetWaypoint) : commitNumber(headingText, wp.param4);
+    setHeadingText(String(heading));
+    onUpdate(wp.id, { param2: targetSeq, param4: heading });
   };
 
   if (!wp) {
@@ -387,19 +527,72 @@ function SelectedWaypointEditor({ wp, index, onUpdate, onRemove }) {
       </div>
 
       <div>
-        <label className="block text-[11px] text-slate-500 mb-1">Command</label>
+        <label className="block text-[11px] text-slate-500 mb-1">Action</label>
         <select
           className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-300"
           value={wp.command || 'NAV_WAYPOINT'}
-          onChange={(e) => onUpdate(wp.id, { command: e.target.value })}
+          onChange={(e) => {
+            const nextCommand = e.target.value;
+            const nextUpdates = { command: nextCommand };
+            if (nextCommand === 'NAV_LOITER_TIME' && toFiniteNumber(wp.param1, 0) <= 0) {
+              nextUpdates.param1 = 5;
+            }
+            if (nextCommand === 'DO_SET_CAM_TRIGG_DIST' && toFiniteNumber(wp.param1, 0) <= 0) {
+              nextUpdates.param1 = 1;
+            }
+            onUpdate(wp.id, nextUpdates);
+          }}
         >
-          <option value="NAV_WAYPOINT">Waypoint</option>
-          <option value="NAV_LOITER_TIME">Loiter</option>
-          <option value="NAV_RETURN_TO_LAUNCH">RTL</option>
-          <option value="NAV_LAND">Land</option>
-          <option value="NAV_TAKEOFF">Takeoff</option>
-          <option value="DO_SET_CAM_TRIGG_DIST">Camera Trigger</option>
+          {WAYPOINT_ACTIONS.map((action) => (
+            <option key={action.value} value={action.value}>{action.label}</option>
+          ))}
         </select>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+        <div>
+          <label className="block text-[11px] text-slate-500 mb-1">Stay time (seconds)</label>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200"
+            value={dwellText}
+            onChange={(e) => setDwellText(e.target.value)}
+            onBlur={() => onUpdate(wp.id, { param1: commitNumber(dwellText, wp.param1) })}
+          />
+          <p className="mt-1 text-[11px] text-slate-500">Used as waypoint hold time or loiter duration, depending on the selected action.</p>
+        </div>
+
+        <div>
+          <label className="block text-[11px] text-slate-500 mb-1">Heading (degrees)</label>
+          <input
+            type="number"
+            step="1"
+            min="0"
+            max="359"
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200"
+            value={headingText}
+            onChange={(e) => setHeadingText(e.target.value)}
+            onBlur={() => onUpdate(wp.id, { param4: commitNumber(headingText, wp.param4) })}
+          />
+        </div>
+
+        <div className="md:col-span-2">
+          <label className="block text-[11px] text-slate-500 mb-1">Look at waypoint</label>
+          <select
+            className="w-full bg-slate-800 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-300"
+            value={targetSeqText ? String(targetSeqText) : '0'}
+            onChange={(e) => applyTargetSelection(e.target.value)}
+          >
+            {targetOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          <p className="mt-1 text-[11px] text-slate-500">
+            Picking another waypoint will auto-calculate heading toward that point.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -408,6 +601,7 @@ function SelectedWaypointEditor({ wp, index, onUpdate, onRemove }) {
 export default function MissionPlannerPage() {
   const missions = useMissionStore((s) => s.missions);
   const selectedMissionId = useMissionStore((s) => s.selectedMissionId);
+  const activeMission = useMissionStore((s) => s.activeMission);
   const isLoading = useMissionStore((s) => s.isLoading);
   const fetchMissions = useMissionStore((s) => s.fetchMissions);
   const fetchMission = useMissionStore((s) => s.fetchMission);
@@ -606,11 +800,59 @@ export default function MissionPlannerPage() {
     openAssignModal(selectedMission);
   };
 
+  const buildPlannerStatePayload = (overrides = {}) => ({
+    geofence_polygon: overrides.geofencePoints ?? geofencePoints,
+    terrain_fallback_policy: overrides.terrainFallbackPolicy ?? terrainFallbackPolicy,
+    launch_policy: overrides.launchPolicy ?? launchPolicy,
+    grid_config: overrides.gridParams ?? gridParams,
+  });
+
+  const mergeSettingsWithPlannerState = (baseSettings, overrides) => {
+    const safeBase = baseSettings && typeof baseSettings === 'object' ? baseSettings : {};
+    const existingPlannerState =
+      safeBase.planner_state && typeof safeBase.planner_state === 'object' ? safeBase.planner_state : {};
+
+    return {
+      ...safeBase,
+      planner_state: {
+        ...existingPlannerState,
+        ...buildPlannerStatePayload(overrides),
+      },
+    };
+  };
+
+  const persistPlannerStateDraft = async (overrides) => {
+    if (!selectedMissionId) return;
+    const baseSettings =
+      activeMission?.id === selectedMissionId
+        ? activeMission.settings
+        : selectedMission?.settings;
+    await updateMission(selectedMissionId, {
+      waypoints,
+      settings: mergeSettingsWithPlannerState(baseSettings, overrides),
+    });
+  };
+
+  const handleDeletePolygon = async () => {
+    setGeofencePoints([]);
+    setGridPreviewWaypoints([]);
+    await persistPlannerStateDraft({ geofencePoints: [] });
+  };
+
   const hydrateMissionPlanningState = (mission) => {
-    setGeofencePoints(mission?.geofence_polygon || mission?.geofence || []);
-    setTerrainFallbackPolicy(mission?.terrain_fallback_policy || 'use_relative');
-    setLaunchPolicy(mission?.launch_policy || 'all_or_none');
-    setGridParams({ ...DEFAULT_GRID_PARAMS, ...(mission?.grid_config || {}) });
+    const plannerState = mission?.settings?.planner_state || mission?.settings || {};
+    const geofenceSource =
+      plannerState.geofence_polygon ||
+      plannerState.geofence ||
+      plannerState.geofence_points ||
+      plannerState.geofence_vertices ||
+      mission?.geofence_polygon ||
+      mission?.geofence ||
+      [];
+    setGeofencePoints(normalizeGeofencePoints(geofenceSource));
+    setTerrainFallbackPolicy(plannerState.terrain_fallback_policy || 'use_relative');
+    setLaunchPolicy(plannerState.launch_policy || 'all_or_none');
+    setGridParams({ ...DEFAULT_GRID_PARAMS, ...(plannerState.grid_config || {}) });
     setGridPreviewWaypoints([]);
     setPreflightResults([]);
     setReadinessSummary({ ready: 0, total: 0, blockers: 0, warnings: 0 });
@@ -629,15 +871,17 @@ export default function MissionPlannerPage() {
     setShowAssignModal(false);
   };
 
-  const buildMissionPayload = () => ({
-    name: missionName.trim(),
-    type: missionType,
-    waypoints,
-    geofence_polygon: geofencePoints,
-    terrain_fallback_policy: terrainFallbackPolicy,
-    launch_policy: launchPolicy,
-    grid_config: gridParams,
-  });
+  const buildMissionPayload = () => {
+    const baseSettings = editingMission
+      ? (activeMission?.id === editingMission.id ? activeMission.settings : editingMission.settings)
+      : {};
+    return {
+      name: missionName.trim(),
+      type: missionType,
+      waypoints,
+      settings: mergeSettingsWithPlannerState(baseSettings),
+    };
+  };
 
   const handleSaveMission = async () => {
     if (!missionName.trim()) return;
@@ -653,14 +897,7 @@ export default function MissionPlannerPage() {
   };
 
   const handleSaveDraft = async () => {
-    if (!selectedMissionId) return;
-    await updateMission(selectedMissionId, {
-      waypoints,
-      geofence_polygon: geofencePoints,
-      terrain_fallback_policy: terrainFallbackPolicy,
-      launch_policy: launchPolicy,
-      grid_config: gridParams,
-    });
+    await persistPlannerStateDraft();
   };
 
   const handleUploadMission = async () => {
@@ -736,14 +973,26 @@ export default function MissionPlannerPage() {
   };
 
   const handleDuplicateMission = async (mission) => {
+    const baseSettings = mission?.settings;
+    const plannerState = baseSettings?.planner_state || baseSettings || {};
+    const geofencePolygon = normalizeGeofencePoints(
+      plannerState.geofence_polygon ||
+      plannerState.geofence ||
+      plannerState.geofence_points ||
+      plannerState.geofence_vertices ||
+      []
+    );
+
     const payload = {
       name: `${mission.name} Copy`,
       type: mission.type || 'survey',
       waypoints: mission.waypoints || [],
-      geofence_polygon: mission.geofence_polygon || mission.geofence || geofencePoints,
-      terrain_fallback_policy: mission.terrain_fallback_policy || terrainFallbackPolicy,
-      launch_policy: mission.launch_policy || launchPolicy,
-      grid_config: mission.grid_config || gridParams,
+      settings: mergeSettingsWithPlannerState(baseSettings, {
+        geofencePoints: geofencePolygon.length ? geofencePolygon : geofencePoints,
+        terrainFallbackPolicy: plannerState.terrain_fallback_policy || terrainFallbackPolicy,
+        launchPolicy: plannerState.launch_policy || launchPolicy,
+        gridParams: plannerState.grid_config || gridParams,
+      }),
     };
     await createMission(payload);
   };
@@ -757,6 +1006,10 @@ export default function MissionPlannerPage() {
       alt: 100,
       altitude_mode: 'relative',
       command: 'NAV_WAYPOINT',
+      param1: 0,
+      param2: 0,
+      param3: 0,
+      param4: 0,
     };
     addWaypoint(waypoint);
     setSelectedWaypointId(id);
@@ -782,9 +1035,12 @@ export default function MissionPlannerPage() {
     setIsDrawingGeofence(false);
   };
 
-  const finishGeofenceEdit = () => {
+  const finishGeofenceEdit = async () => {
     setGeofenceBackup(null);
     setIsDrawingGeofence(false);
+
+    // Persist geofence updates so they load next time.
+    await persistPlannerStateDraft();
   };
 
   const undoGeofencePoint = () => {
@@ -1275,7 +1531,7 @@ export default function MissionPlannerPage() {
                       <Button size="sm" variant="ghost" onClick={cancelGeofenceEdit}>Cancel</Button>
                     </>
                   )}
-                  <Button size="sm" variant="ghost" onClick={() => { setGeofencePoints([]); setGridPreviewWaypoints([]); }} disabled={geofencePoints.length === 0}>Delete Polygon</Button>
+                  <Button size="sm" variant="ghost" onClick={handleDeletePolygon} disabled={geofencePoints.length === 0}>Delete Polygon</Button>
                 </div>
                 <p className="text-xs text-slate-500">Vertices: {geofencePoints.length}. Mission start is blocked if any waypoint/path exits polygon.</p>
                 {!missionValidation.valid && (
@@ -1486,6 +1742,7 @@ export default function MissionPlannerPage() {
                     key={selectedWaypoint?.id || 'none'}
                     wp={selectedWaypoint}
                     index={selectedWaypointIndex}
+                    allWaypoints={waypoints}
                     onUpdate={updateWaypoint}
                     onRemove={removeWaypoint}
                   />

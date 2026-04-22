@@ -28,8 +28,6 @@ RUN pip install --no-cache-dir \
     python-jose[cryptography] \
     passlib[bcrypt] \
     "bcrypt<4.0" \
-    motor \
-    redis[hiredis] \
     aiomqtt \
     httpx \
     python-multipart \

@@ -1,12 +1,11 @@
 """Action semantics endpoints.
 
 - Registry: serve baseline action metadata.
-- Audit: ingest action audit events into a durable stream (Redis).
+- Audit: ingest action audit events into an in-memory runtime log.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import Any
 
@@ -14,7 +13,7 @@ from fastapi import APIRouter, Depends, Request
 
 from backend.services.auth.dependencies import CurrentUser, RequireRole
 from backend.shared.action_registry import get_action_registry
-from backend.shared.database.redis import RedisKeys, get_redis
+from backend.shared.runtime_cache import get_runtime_cache
 from backend.shared.schemas.action_semantics import ActionAuditEvent, ActionRegistryResponse
 from backend.shared.schemas.auth import Role
 
@@ -34,7 +33,7 @@ async def registry() -> ActionRegistryResponse:
 async def ingest_audit_event(request: Request, event: ActionAuditEvent, user: CurrentUser) -> dict[str, Any]:
     """Ingest an action audit event.
 
-    Persists to Redis Stream for durability + later ETL into Postgres/SIEM.
+    Persists to an in-memory runtime log.
     """
 
     # Fill actor/org if client didn't include it.
@@ -54,15 +53,8 @@ async def ingest_audit_event(request: Request, event: ActionAuditEvent, user: Cu
         "user_agent": request.headers.get("User-Agent"),
     }
 
-    payload = json.dumps(record, separators=(",", ":"), ensure_ascii=False)
-    redis = get_redis()
-    stream_id = await redis.xadd(
-        RedisKeys.action_audit_stream(),
-        {"event": payload},
-        maxlen=10_000,
-        approximate=True,
-    )
+    stream_id = get_runtime_cache().append_audit_event(record)
 
     logger.info("action_audit_ingest action_id=%s outcome=%s stream_id=%s", event.action_id, event.outcome, stream_id)
 
-    return {"accepted": True, "stream": RedisKeys.action_audit_stream(), "id": stream_id}
+    return {"accepted": True, "storage": "memory", "id": stream_id}

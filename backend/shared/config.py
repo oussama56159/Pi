@@ -45,31 +45,6 @@ class BaseServiceSettings(BaseSettings):
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
-    # ── MongoDB ──
-    MONGO_HOST: str = "localhost"
-    MONGO_PORT: int = 27017
-    MONGO_USER: str = "aerocommand"
-    MONGO_PASSWORD: str = "aerocommand_secret"
-    MONGO_DB: str = "aerocommand_telemetry"
-
-    @property
-    def mongo_dsn(self) -> str:
-        return (
-            f"mongodb://{self.MONGO_USER}:{self.MONGO_PASSWORD}"
-            f"@{self.MONGO_HOST}:{self.MONGO_PORT}/{self.MONGO_DB}?authSource=admin"
-        )
-
-    # ── Redis ──
-    REDIS_HOST: str = "localhost"
-    REDIS_PORT: int = 6379
-    REDIS_PASSWORD: str | None = None
-    REDIS_DB: int = 0
-
-    @property
-    def redis_url(self) -> str:
-        auth = f":{self.REDIS_PASSWORD}@" if self.REDIS_PASSWORD else ""
-        return f"redis://{auth}{self.REDIS_HOST}:{self.REDIS_PORT}/{self.REDIS_DB}"
-
     # ── MQTT (EMQX) ──
     MQTT_BROKER_HOST: str = "localhost"
     MQTT_BROKER_PORT: int = 1883

@@ -1,0 +1,9 @@
+aerocommand-shared>=0.1.0
+pydantic>=2.6
+pydantic-settings>=2.2
+aiomqtt>=2.0
+orjson>=3.9
+pymavlink>=2.4
+
+[camera]
+opencv-contrib-python-headless>=4.10

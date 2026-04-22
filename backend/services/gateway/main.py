@@ -20,10 +20,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from backend.shared.config import get_base_settings
-from backend.shared.database import init_postgres, init_redis, close_redis
+from backend.shared.database import init_postgres
 from backend.shared.database.postgres import ensure_schema
 from backend.shared.database.postgres import get_postgres_session
-from backend.shared.database.mongo import init_mongo, close_mongo
 
 from backend.services.mission.mqtt_listener import start_mission_status_listener
 from backend.services.telemetry.mqtt_listener import start_telemetry_listener
@@ -49,8 +48,6 @@ async def lifespan(app: FastAPI):
             await ensure_owner_account(db)
             await db.commit()
             break
-    await init_redis()
-    await init_mongo()
 
     # MQTT topic subscriptions (these return quickly after registering handlers)
     mission_task = asyncio.create_task(start_mission_status_listener())
@@ -62,8 +59,6 @@ async def lifespan(app: FastAPI):
     for task in (mission_task, telemetry_task, command_task, alert_task):
         task.cancel()
     await close_mqtt()
-    await close_redis()
-    await close_mongo()
 
 
 def create_app() -> FastAPI:

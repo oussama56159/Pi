@@ -10,9 +10,9 @@ import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
+from sqlalchemy import text
 
-from backend.shared.database.redis import get_redis
-from backend.shared.database.mongo import get_mongo_db
+from backend.shared.database.postgres import get_direct_postgres_session
 
 router = APIRouter(prefix="/health")
 
@@ -37,21 +37,14 @@ async def readiness():
     """
     checks = {}
 
-    # Redis check
+    # PostgreSQL check
     try:
-        redis = get_redis()
-        await asyncio.wait_for(redis.ping(), timeout=2.0)
-        checks["redis"] = {"status": "up"}
+        db = await get_direct_postgres_session()
+        async with db:
+            await asyncio.wait_for(db.execute(text("SELECT 1")), timeout=2.0)
+        checks["postgresql"] = {"status": "up"}
     except Exception as e:
-        checks["redis"] = {"status": "down", "error": str(e)}
-
-    # MongoDB check
-    try:
-        db = get_mongo_db()
-        await asyncio.wait_for(db.command("ping"), timeout=2.0)
-        checks["mongodb"] = {"status": "up"}
-    except Exception as e:
-        checks["mongodb"] = {"status": "down", "error": str(e)}
+        checks["postgresql"] = {"status": "down", "error": str(e)}
 
     all_up = all(c["status"] == "up" for c in checks.values())
     status_code = 200 if all_up else 503

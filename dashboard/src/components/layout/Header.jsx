@@ -1,4 +1,5 @@
 import { Bell, Menu, Search, LogOut, Wifi, WifiOff, Moon, Sun } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { useUIStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
 import { useTelemetryStore } from '@/stores/telemetryStore';
@@ -149,6 +150,15 @@ export default function Header() {
                 {alerts.length === 0 && (
                   <div className="p-6 text-center text-sm text-slate-500">No notifications</div>
                 )}
+              </div>
+              <div className="p-3 border-t border-slate-700 bg-slate-900/40">
+                <Link
+                  to="/app/notifications"
+                  onClick={() => setShowAlerts(false)}
+                  className="block w-full text-center text-sm font-medium text-blue-400 hover:text-blue-300"
+                >
+                  View notification history
+                </Link>
               </div>
             </div>
           )}

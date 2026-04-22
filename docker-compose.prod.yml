@@ -25,45 +25,6 @@ services:
       timeout: 5s
       retries: 5
 
-  mongo:
-    image: mongo:7
-    container_name: aero-mongo
-    restart: always
-    environment:
-      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
-      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
-    volumes:
-      - mongo_data:/data/db
-    deploy:
-      resources:
-        limits: { cpus: "2", memory: 2G }
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  redis:
-    image: redis:7-alpine
-    container_name: aero-redis
-    restart: always
-    command: >
-      redis-server
-      --requirepass ${REDIS_PASSWORD}
-      --maxmemory 512mb
-      --maxmemory-policy allkeys-lru
-      --appendonly yes
-    volumes:
-      - redis_data:/data
-    deploy:
-      resources:
-        limits: { cpus: "1", memory: 512M }
-    healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   emqx:
     image: emqx/emqx:5.5
     container_name: aero-emqx
@@ -100,11 +61,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-      MONGO_HOST: mongo
-      MONGO_USER: ${MONGO_USER}
-      MONGO_PASSWORD: ${MONGO_PASSWORD}
-      REDIS_HOST: redis
-      REDIS_PASSWORD: ${REDIS_PASSWORD}
       MQTT_BROKER_HOST: emqx
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -129,8 +85,6 @@ services:
       - "8000:8000"
     depends_on:
       postgres: { condition: service_healthy }
-      mongo:    { condition: service_healthy }
-      redis:    { condition: service_healthy }
       emqx:     { condition: service_healthy }
     deploy:
       replicas: 2
@@ -156,8 +110,6 @@ services:
 
 volumes:
   pg_data:
-  mongo_data:
-  redis_data:
   emqx_data:
 
 networks:

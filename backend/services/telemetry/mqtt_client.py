@@ -2,9 +2,9 @@
 MQTT Client for the Telemetry Service.
 Subscribes to telemetry topics from all edge agents,
 processes incoming MAVLink-derived data, and fans out to:
-  1. MongoDB (time-series persistence)
-  2. Redis (latest snapshot cache)
-  3. WebSocket manager (real-time dashboard push)
+    1. PostgreSQL (time-series persistence)
+    2. In-memory cache (latest snapshot)
+    3. WebSocket manager (real-time dashboard push)
 """
 from __future__ import annotations
 

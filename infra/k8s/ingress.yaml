@@ -84,17 +84,9 @@ spec:
               app: postgres
         - podSelector:
             matchLabels:
-              app: mongo
-        - podSelector:
-            matchLabels:
-              app: redis
-        - podSelector:
-            matchLabels:
               app: emqx
       ports:
         - port: 5432
-        - port: 27017
-        - port: 6379
         - port: 1883
     - to:   # DNS resolution
         - namespaceSelector: {}

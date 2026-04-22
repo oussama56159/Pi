@@ -10,7 +10,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 
-from backend.shared.database.redis import get_redis, RedisKeys
 from backend.shared.schemas.auth import (
     LoginRequest,
     LoginResponse,
@@ -23,6 +22,7 @@ from backend.shared.schemas.auth import (
     UserUpdate,
     UserResponse,
 )
+from backend.shared.runtime_cache import get_runtime_cache
 
 from .models import Organization, User
 from .security import (
@@ -361,21 +361,16 @@ async def login_user(db: AsyncSession, data: LoginRequest) -> LoginResponse:
     access_token, access_jti, expires_in = create_access_token(str(user.id), user.role, org_id)
     refresh_token, refresh_jti = create_refresh_token(str(user.id))
 
-    # Store session in Redis
-    try:
-        redis = get_redis()
-        await redis.hset(
-            RedisKeys.session(str(user.id)),
-            mapping={
-                "access_jti": access_jti,
-                "refresh_jti": refresh_jti,
-                "role": user.role.value,
-                "org_id": org_id or "",
-            },
-        )
-        await redis.expire(RedisKeys.session(str(user.id)), 7 * 24 * 3600)  # 7 days
-    except RuntimeError:
-        pass  # Redis unavailable
+    get_runtime_cache().set_session(
+        str(user.id),
+        {
+            "access_jti": access_jti,
+            "refresh_jti": refresh_jti,
+            "role": user.role.value,
+            "org_id": org_id or "",
+        },
+        ttl_seconds=7 * 24 * 3600,
+    )
 
     return LoginResponse(
         access_token=access_token,
@@ -413,11 +408,7 @@ async def refresh_tokens(db: AsyncSession, refresh_token: str) -> TokenRefreshRe
     # Blacklist old refresh token
     old_jti = payload.get("jti")
     if old_jti:
-        try:
-            redis = get_redis()
-            await redis.setex(RedisKeys.token_blacklist(old_jti), 7 * 24 * 3600, "1")
-        except RuntimeError:
-            pass
+        get_runtime_cache().blacklist_token(old_jti, 7 * 24 * 3600)
 
     org_id = str(user.organization_id) if user.organization_id else None
     new_access, _, expires_in = create_access_token(str(user.id), user.role, org_id)
@@ -432,11 +423,8 @@ async def refresh_tokens(db: AsyncSession, refresh_token: str) -> TokenRefreshRe
 
 async def logout_user(user_id: str, jti: str | None) -> None:
     """Blacklist current token and clear session."""
-    try:
-        redis = get_redis()
-        if jti:
-            await redis.setex(RedisKeys.token_blacklist(jti), 24 * 3600, "1")
-        await redis.delete(RedisKeys.session(user_id))
-    except RuntimeError:
-        pass
+    cache = get_runtime_cache()
+    if jti:
+        cache.blacklist_token(jti, 24 * 3600)
+    cache.clear_session(user_id)
 

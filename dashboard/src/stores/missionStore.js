@@ -63,7 +63,12 @@ export const useMissionStore = create((set, get) => ({
     set({ isLoading: true, error: null });
     try {
       const { data } = await missionAPI.get(id);
-      set({ activeMission: data, waypoints: normalizeWaypoints(data.waypoints || []), isLoading: false });
+      set((state) => ({
+        activeMission: data,
+        waypoints: normalizeWaypoints(data.waypoints || []),
+        missions: state.missions.map((m) => (m.id === id ? data : m)),
+        isLoading: false,
+      }));
       return data;
     } catch (err) {
       set({ error: err.message, isLoading: false });

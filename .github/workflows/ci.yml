@@ -68,18 +68,6 @@ jobs:
         options: >-
           --health-cmd="pg_isready -U test"
           --health-interval=10s --health-timeout=5s --health-retries=5
-      redis:
-        image: redis:7-alpine
-        ports: ["6379:6379"]
-        options: >-
-          --health-cmd="redis-cli ping"
-          --health-interval=10s --health-timeout=5s --health-retries=5
-      mongo:
-        image: mongo:7
-        env:
-          MONGO_INITDB_ROOT_USERNAME: test
-          MONGO_INITDB_ROOT_PASSWORD: test
-        ports: ["27017:27017"]
 
     steps:
       - uses: actions/checkout@v4
@@ -96,7 +84,7 @@ jobs:
           pip install ruff pytest pytest-asyncio pytest-cov httpx
           pip install fastapi[standard] uvicorn sqlalchemy[asyncio] asyncpg \
             pydantic pydantic-settings python-jose[cryptography] passlib[bcrypt] \
-            motor redis[hiredis] aiomqtt httpx python-multipart orjson alembic
+            aiomqtt httpx python-multipart orjson alembic
 
       - name: Lint with Ruff
         run: ruff check backend/ --output-format=github
@@ -108,10 +96,6 @@ jobs:
           POSTGRES_USER: test
           POSTGRES_PASSWORD: test
           POSTGRES_DB: aerocommand_test
-          MONGO_HOST: localhost
-          MONGO_USER: test
-          MONGO_PASSWORD: test
-          REDIS_HOST: localhost
           JWT_SECRET_KEY: test_secret_key
         run: pytest backend/ -v --cov=backend --cov-report=xml
 

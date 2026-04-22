@@ -1,0 +1,2 @@
+[console_scripts]
+aerocommand-edge-agent = aerocommand_edge_agent.main:main

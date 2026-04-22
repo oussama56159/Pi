@@ -19,6 +19,7 @@ const navItems = [
   { path: '/app/missions', icon: Navigation, label: 'Mission Planner', roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.PILOT, ROLES.OPERATOR] },
   { path: '/app/control', icon: Gamepad2, label: 'Control Panel', roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.PILOT] },
   { type: 'divider' },
+  { path: '/app/notifications', icon: Bell, label: 'Notifications', roles: null },
   { path: '/app/alerts', icon: Bell, label: 'Alerts', roles: null },
   { path: '/app/analytics', icon: BarChart3, label: 'Analytics', roles: null },
   { type: 'divider' },

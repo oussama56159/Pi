@@ -102,7 +102,7 @@ class TelemetryFrame(BaseModel):
 
 
 class TelemetrySnapshot(BaseModel):
-    """Cached latest telemetry for a vehicle (stored in Redis)."""
+    """Cached latest telemetry for a vehicle."""
     vehicle_id: str
     timestamp: datetime
     lat: float

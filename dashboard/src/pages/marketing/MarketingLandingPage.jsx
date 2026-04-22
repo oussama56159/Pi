@@ -454,7 +454,7 @@ export default function MarketingLandingPage() {
             <Card className="bg-slate-900/60">
               <div className="text-sm font-semibold text-slate-100">Backend technologies</div>
               <div className="mt-2 text-sm text-slate-400">
-                Built with a modern stack for secure APIs and real-time operations (FastAPI, PostgreSQL, Redis, MongoDB,
+                Built with a modern stack for secure APIs and real-time operations (FastAPI, PostgreSQL,
                 MQTT/EMQX, Docker, Kubernetes).
               </div>
               <div className="mt-5 grid grid-cols-2 gap-4">

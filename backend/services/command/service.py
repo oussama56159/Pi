@@ -13,9 +13,9 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.shared.database.redis import RedisKeys, get_redis
 from backend.shared.mqtt_topics import MQTTTopics
 from backend.shared.mqtt_runtime import get_mqtt
+from backend.shared.runtime_cache import get_runtime_cache
 from backend.shared.schemas.command import (
     CommandAck,
     CommandRequest,
@@ -43,7 +43,7 @@ async def dispatch_command(
     Validate and dispatch a command to a vehicle.
     1. Validate command preconditions
     2. Record command in PostgreSQL
-    3. Cache command status in Redis
+    3. Cache command status in memory
     4. Publish to MQTT for edge agent
     5. Return command record
     """
@@ -91,18 +91,16 @@ async def dispatch_command(
         logger.error("Failed to publish command %s to MQTT: %s", record.id, exc)
         raise HTTPException(status_code=503, detail="Command dispatch unavailable (MQTT offline)")
 
-    # Cache command status in Redis for fast ack matching
-    try:
-        redis = get_redis()
-        await redis.hset(RedisKeys.command(str(record.id)), mapping={
+    get_runtime_cache().set_command_state(
+        str(record.id),
+        {
             "status": CommandStatus.SENT.value,
             "vehicle_id": str(data.vehicle_id),
             "command": data.command.value,
             "issued_at": issued_at.isoformat(),
-        })
-        await redis.expire(RedisKeys.command(str(record.id)), data.timeout_seconds + 60)
-    except RuntimeError:
-        pass
+        },
+        ttl_seconds=data.timeout_seconds + 60,
+    )
 
     # Update status to SENT
     record.status = CommandStatus.SENT
@@ -116,17 +114,15 @@ async def dispatch_command(
 
 async def handle_command_ack(ack: CommandAck) -> None:
     """Process command acknowledgment from edge agent (via MQTT)."""
-    try:
-        redis = get_redis()
-        key = RedisKeys.command(ack.command_id)
-        await redis.hset(key, mapping={
+    get_runtime_cache().update_command_state(
+        ack.command_id,
+        {
             "status": ack.status.value,
             "result_code": str(ack.result_code),
             "message": ack.message or "",
             "ack_at": ack.timestamp.isoformat(),
-        })
-    except RuntimeError:
-        pass
+        },
+    )
 
     logger.info(f"Command {ack.command_id} acknowledged: {ack.status.value}")
 
@@ -157,13 +153,9 @@ async def list_commands(
 async def _validate_command(data: CommandRequest) -> None:
     """Validate command preconditions."""
     # Check vehicle is online
-    try:
-        redis = get_redis()
-        status = await redis.get(RedisKeys.vehicle_status(str(data.vehicle_id)))
-        if status != "online":
-            raise HTTPException(status_code=409, detail="Vehicle is offline")
-    except RuntimeError:
-        pass  # Redis down, skip check
+    status = get_runtime_cache().get_vehicle_status(str(data.vehicle_id))
+    if status is not None and status != "online":
+        raise HTTPException(status_code=409, detail="Vehicle is offline")
 
 
 def _build_mavlink_command(data: CommandRequest) -> MAVLinkCommand | None:
@@ -197,12 +189,9 @@ def _build_mavlink_command(data: CommandRequest) -> MAVLinkCommand | None:
 async def _command_timeout_watcher(command_id: str, timeout: int) -> None:
     """Background task to mark timed-out commands."""
     await asyncio.sleep(timeout)
-    try:
-        redis = get_redis()
-        status = await redis.hget(RedisKeys.command(command_id), "status")
-        if status in (CommandStatus.PENDING.value, CommandStatus.SENT.value):
-            await redis.hset(RedisKeys.command(command_id), "status", CommandStatus.TIMEOUT.value)
-            logger.warning(f"Command {command_id} timed out after {timeout}s")
-    except RuntimeError:
-        pass
+    cache = get_runtime_cache()
+    state = cache.get_command_state(command_id)
+    if state and state.get("status") in (CommandStatus.PENDING.value, CommandStatus.SENT.value):
+        cache.update_command_state(command_id, {"status": CommandStatus.TIMEOUT.value})
+        logger.warning(f"Command {command_id} timed out after {timeout}s")
 

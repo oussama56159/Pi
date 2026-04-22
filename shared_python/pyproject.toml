@@ -17,8 +17,6 @@ dependencies = [
 backend = [
   "sqlalchemy>=2.0",
   "asyncpg>=0.29",
-  "motor>=3.3",
-  "redis[hiredis]>=5.0",
   "aiomqtt>=2.0",
 ]
 

@@ -18,6 +18,7 @@ const LiveMapPage = lazy(() => import('@/pages/map/LiveMapPage'));
 const DroneSimulation3DPage = lazy(() => import('@/pages/simulation/DroneSimulation3DPage'));
 const MissionPlannerPage = lazy(() => import('@/pages/missions/MissionPlannerPage'));
 const ControlPanelPage = lazy(() => import('@/pages/control/ControlPanelPage'));
+const NotificationHistoryPage = lazy(() => import('@/pages/notifications/NotificationHistoryPage'));
 const AlertsPage = lazy(() => import('@/pages/alerts/AlertsPage'));
 const AnalyticsPage = lazy(() => import('@/pages/analytics/AnalyticsPage'));
 const UsersPage = lazy(() => import('@/pages/users/UsersPage'));
@@ -93,6 +94,7 @@ export default function App() {
             <ControlPanelPage />
           </ProtectedRoute>
         } />
+        <Route path="notifications" element={<NotificationHistoryPage />} />
         <Route path="alerts" element={<AlertsPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="users" element={

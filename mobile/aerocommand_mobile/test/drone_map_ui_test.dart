@@ -15,6 +15,7 @@ void main() {
     final vm = DroneMarkerViewModel(
       vehicleId: 'v1',
       name: 'Drone A',
+      vehicleType: 'quadcopter',
       state: DroneOperationalState.armed,
       headingDeg: 90,
       altMeters: 12,
@@ -58,6 +59,7 @@ void main() {
             vm: DroneMarkerViewModel(
               vehicleId: 'v2',
               name: 'Drone Bravo',
+              vehicleType: 'quadcopter',
               state: DroneOperationalState.inflight,
               headingDeg: 0,
             ),

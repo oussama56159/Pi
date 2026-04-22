@@ -27,10 +27,10 @@
                                     └──────┬───────┘
                                            │ HTTP + WebSocket
                                            ▼
-┌──────────┐    MAVLink     ┌───────────┐  MQTT   ┌──────────────────┐    SQL/NoSQL    ┌──────────────────┐
-│ Pixhawk  │──── UART ─────▶│  Pi Zero  │────────▶│  Backend API     │───────────────▶│  Postgres        │
-│ (FC)     │   /dev/serial0 │  (Edge    │  EMQX   │  (FastAPI)       │               │  MongoDB         │
-│          │                │   Agent)  │◀────────│                  │               │  Redis           │
+┌──────────┐    MAVLink     ┌───────────┐  MQTT   ┌──────────────────┐      SQL      ┌──────────────────┐
+│ Pixhawk  │──── UART ─────▶│  Pi Zero  │────────▶│  Backend API     │───────────────▶│  PostgreSQL      │
+│ (FC)     │   /dev/serial0 │  (Edge    │  EMQX   │  (FastAPI)       │               │  history + state │
+│          │                │   Agent)  │◀────────│                  │               │                  │
 └──────────┘                └───────────┘ cmds    └──────────────────┘               └──────────────────┘
                                                            │ WebSocket
                                                            ▼
@@ -48,7 +48,7 @@
 | Layer | Technology |
 |-------|-----------|
 | **Backend API** | Python, FastAPI, SQLAlchemy (async), Pydantic |
-| **Databases** | PostgreSQL (relational), MongoDB (time-series telemetry), Redis (cache + pub/sub) |
+| **Databases** | PostgreSQL (relational + telemetry history), in-memory cache (latest snapshots / runtime state) |
 | **Message broker** | EMQX (MQTT) |
 | **Web dashboard** | React 18, Vite, Tailwind CSS, Zustand, Recharts, Leaflet |
 | **Mobile app** | Flutter / Dart (Android & iOS) |
@@ -80,7 +80,7 @@ scripts/           PowerShell helper scripts for dev
 |--------|-----------|-------------|
 | **Auth** | `/api/v1/auth/*` | JWT login/logout/refresh, user CRUD, organization CRUD, role-based access (Super Admin, Admin, Operator, Pilot, Viewer), password recovery |
 | **Fleet** | `/api/v1/fleet/*` | Vehicle CRUD, fleet groups, fleet-user assignments, vehicle status tracking |
-| **Telemetry** | `/api/v1/telemetry/*` | Latest snapshot (Redis), historical queries (MongoDB), real-time WebSocket streaming |
+| **Telemetry** | `/api/v1/telemetry/*` | Latest snapshot (in-memory), historical queries (PostgreSQL), real-time WebSocket streaming |
 | **Missions** | `/api/v1/missions/*` | Mission CRUD, waypoint graph builder, assign/unassign vehicles, upload to vehicle, status tracking |
 | **Commands** | `/api/v1/commands/*` | Dispatch commands to vehicles via MQTT (arm, disarm, takeoff, land, RTL, etc.), command history |
 | **Alerts** | `/api/v1/alerts/*` | Rule engine, alert CRUD, acknowledge/resolve, real-time push via WebSocket |
@@ -146,7 +146,7 @@ docker compose up -d --build
 
 ### Option B: Without Docker
 
-**Prerequisites:** Python 3.11+, Node 20+, PostgreSQL, MongoDB, Redis, and EMQX running locally
+**Prerequisites:** Python 3.11+, Node 20+, PostgreSQL, and EMQX running locally
 
 **Backend:**
 
@@ -154,7 +154,7 @@ docker compose up -d --build
 cd backend
 pip install -U pip
 pip install fastapi[standard] uvicorn[standard] sqlalchemy[asyncio] asyncpg alembic \
-  pydantic pydantic-settings python-jose[cryptography] passlib[bcrypt] motor redis[hiredis] \
+  pydantic pydantic-settings python-jose[cryptography] passlib[bcrypt] \
   aiomqtt httpx python-multipart orjson
 uvicorn backend.services.gateway.main:app --reload --port 8000
 ```

@@ -17,8 +17,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from backend.shared.config import get_base_settings
-from backend.shared.database.redis import get_redis, RedisKeys
 from backend.shared.database.postgres import get_direct_postgres_session
+from backend.shared.runtime_cache import get_runtime_cache
 from backend.services.auth.models import Organization, User
 from backend.shared.schemas.auth import Role
 
@@ -79,12 +79,8 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         # Check token blacklist (logout / revocation)
         jti = payload.get("jti")
         if jti:
-            try:
-                redis = get_redis()
-                if await redis.exists(RedisKeys.token_blacklist(jti)):
-                    return JSONResponse(status_code=401, content={"detail": "Token revoked"})
-            except RuntimeError:
-                pass  # Redis unavailable – degrade gracefully
+            if get_runtime_cache().is_token_blacklisted(jti):
+                return JSONResponse(status_code=401, content={"detail": "Token revoked"})
 
         # Inject user context
         user_id = payload.get("sub")

@@ -44,7 +44,7 @@ async def api_telemetry_history(
     end_time: datetime = Query(...),
     resolution: str = Query("1s"),
 ):
-    """Query historical telemetry data from MongoDB."""
+    """Query historical telemetry data from PostgreSQL."""
     await ensure_vehicle_access(db, org_id, vehicle_id, user)
     points = await get_telemetry_history(str(vehicle_id), start_time, end_time, resolution)
     return TelemetryHistoryResponse(
