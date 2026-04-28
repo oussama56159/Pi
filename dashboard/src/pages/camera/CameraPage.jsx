@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Activity, ExternalLink, Save, Trash2 } from 'lucide-react';
 import Card, { CardHeader, CardTitle, CardContent } from '@/components/ui/Card';
 import Button from '@/components/ui/Button';
@@ -6,6 +6,8 @@ import Input from '@/components/ui/Input';
 import StatusIndicator from '@/components/ui/StatusIndicator';
 import { useFleetStore } from '@/stores/fleetStore';
 import { useTelemetryStore } from '@/stores/telemetryStore';
+import { visionAPI } from '@/lib/api/endpoints';
+import { API_BASE_URL, TOKEN_KEY } from '@/config/constants';
 
 const CAMERA_URLS_KEY = 'aero_camera_stream_urls_v1';
 
@@ -53,6 +55,18 @@ function getViewerKind(url) {
   return 'image';
 }
 
+function getTelemetryCameraUrl(telemetry) {
+  if (!telemetry || typeof telemetry !== 'object') return '';
+  const candidates = [
+    telemetry.camera_stream_url,
+    telemetry.cameraStreamUrl,
+    telemetry.camera_url,
+    telemetry.cameraUrl,
+  ];
+  const value = candidates.find((item) => typeof item === 'string' && item.trim());
+  return value ? value.trim() : '';
+}
+
 export default function CameraPage() {
   const vehicles = useFleetStore((s) => s.vehicles);
   const storedSelectedId = useFleetStore((s) => s.selectedVehicleId);
@@ -68,20 +82,46 @@ export default function CameraPage() {
   }, [storedSelectedId, vehicles, fallbackSelectedId]);
 
   const t = selectedId ? allTelemetry[selectedId] : null;
+  const telemetryCameraUrl = useMemo(() => getTelemetryCameraUrl(t), [t]);
 
   const [savedUrls, setSavedUrls] = useState(() => loadAllCameraUrls());
   const [draftUrls, setDraftUrls] = useState({});
   const [loadKey, setLoadKey] = useState(0);
+  const [visionLoading, setVisionLoading] = useState(false);
+  const [visionError, setVisionError] = useState('');
+  const [visionEnabledByVehicle, setVisionEnabledByVehicle] = useState({});
+  const [visionSummaryByVehicle, setVisionSummaryByVehicle] = useState({});
 
   const streamUrl = useMemo(() => {
     if (!selectedId) return '';
     const draft = draftUrls[selectedId];
     if (typeof draft === 'string') return draft;
     const saved = savedUrls?.[selectedId];
-    return typeof saved === 'string' ? saved : '';
-  }, [selectedId, draftUrls, savedUrls]);
+    if (typeof saved === 'string' && saved.trim()) return saved;
+    return telemetryCameraUrl;
+  }, [selectedId, draftUrls, savedUrls, telemetryCameraUrl]);
+
+  useEffect(() => {
+    if (!selectedId || !telemetryCameraUrl) return;
+    const saved = savedUrls?.[selectedId];
+    if (typeof saved === 'string' && saved.trim()) return;
+    setDraftUrls((state) => {
+      if (typeof state[selectedId] === 'string' && state[selectedId].trim()) return state;
+      return { ...state, [selectedId]: telemetryCameraUrl };
+    });
+  }, [selectedId, telemetryCameraUrl, savedUrls]);
 
   const viewerKind = useMemo(() => getViewerKind(streamUrl), [streamUrl]);
+  const token = typeof window !== 'undefined' ? window.localStorage.getItem(TOKEN_KEY) : '';
+  const annotatedStreamUrl = useMemo(() => {
+    if (!selectedId || !visionEnabledByVehicle[selectedId]) return '';
+    const ts = Date.now();
+    const tokenQuery = token ? `&access_token=${encodeURIComponent(token)}` : '';
+    return `${API_BASE_URL}/vision/streams/${selectedId}/annotated.mjpg?ts=${ts}${tokenQuery}`;
+  }, [selectedId, visionEnabledByVehicle, token]);
+  const activeViewerUrl = annotatedStreamUrl || streamUrl;
+  const activeViewerKind = useMemo(() => getViewerKind(activeViewerUrl), [activeViewerUrl]);
+  const detectionSummary = selectedId ? visionSummaryByVehicle[selectedId] : null;
 
   const liveValues = useMemo(() => {
     if (!t) return [];
@@ -161,17 +201,17 @@ export default function CameraPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-5">
-            {viewerKind === 'none' ? (
+            {activeViewerKind === 'none' ? (
               <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-6">
                 <div className="text-sm text-slate-300 font-medium">No stream URL configured</div>
                 <div className="text-xs text-slate-500 mt-1">
                   Set a browser-playable URL (MJPEG over HTTP works well; RTSP needs a proxy/transcoder).
                 </div>
               </div>
-            ) : viewerKind === 'video' ? (
+            ) : activeViewerKind === 'video' ? (
               <video
                 key={`${selectedId}:${loadKey}`}
-                src={streamUrl}
+                src={activeViewerUrl}
                 className="w-full aspect-video rounded-xl border border-slate-700 bg-black"
                 controls
                 autoPlay
@@ -181,10 +221,28 @@ export default function CameraPage() {
             ) : (
               <img
                 key={`${selectedId}:${loadKey}`}
-                src={streamUrl}
+                src={activeViewerUrl}
                 alt="Camera stream"
                 className="w-full aspect-video object-contain rounded-xl border border-slate-700 bg-black"
               />
+            )}
+            {detectionSummary && (
+              <div className="mt-3 rounded-lg border border-slate-700 bg-slate-900/60 p-3 text-xs">
+                <p className="text-slate-300 font-medium mb-2">YOLO detections</p>
+                <div className="flex flex-wrap gap-2">
+                  {Object.entries(detectionSummary.counts || {}).map(([label, count]) => (
+                    <span key={label} className="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-200">
+                      {label}: {count}
+                    </span>
+                  ))}
+                  {!Object.keys(detectionSummary.counts || {}).length && (
+                    <span className="text-slate-500">No target classes currently detected.</span>
+                  )}
+                </div>
+                <p className="text-slate-500 mt-2">
+                  {detectionSummary.running ? 'Running' : 'Stopped'} • {Number(detectionSummary.inference_ms || 0).toFixed(1)} ms
+                </p>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -249,6 +307,79 @@ export default function CameraPage() {
               </div>
               <div className="text-xs text-slate-500">
                 Tip: Use an MJPEG URL for easy browser embedding. If you only have RTSP, expose an HTTP stream (HLS/MJPEG/WebRTC) via your edge agent or backend.
+              </div>
+              <div className="pt-3 border-t border-slate-800 space-y-2">
+                <p className="text-xs text-slate-300 font-medium">Backend YOLOv8 analytics</p>
+                <div className="flex gap-2">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={!selectedId || !String(streamUrl || '').trim() || visionLoading}
+                    onClick={async () => {
+                      if (!selectedId) return;
+                      setVisionLoading(true);
+                      setVisionError('');
+                      try {
+                        await visionAPI.start(selectedId, String(streamUrl || '').trim());
+                        const { data } = await visionAPI.latest(selectedId);
+                        setVisionEnabledByVehicle((state) => ({ ...state, [selectedId]: true }));
+                        setVisionSummaryByVehicle((state) => ({ ...state, [selectedId]: data }));
+                        setLoadKey((k) => k + 1);
+                      } catch (error) {
+                        const detail = error?.response?.data?.detail || 'Failed to start backend vision stream';
+                        setVisionError(String(detail));
+                      } finally {
+                        setVisionLoading(false);
+                      }
+                    }}
+                  >
+                    Start YOLO
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!selectedId || visionLoading}
+                    onClick={async () => {
+                      if (!selectedId) return;
+                      setVisionLoading(true);
+                      setVisionError('');
+                      try {
+                        await visionAPI.stop(selectedId);
+                        setVisionEnabledByVehicle((state) => ({ ...state, [selectedId]: false }));
+                        setLoadKey((k) => k + 1);
+                      } catch (error) {
+                        const detail = error?.response?.data?.detail || 'Failed to stop backend vision stream';
+                        setVisionError(String(detail));
+                      } finally {
+                        setVisionLoading(false);
+                      }
+                    }}
+                  >
+                    Stop YOLO
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={!selectedId || visionLoading}
+                    onClick={async () => {
+                      if (!selectedId) return;
+                      setVisionLoading(true);
+                      setVisionError('');
+                      try {
+                        const { data } = await visionAPI.latest(selectedId);
+                        setVisionSummaryByVehicle((state) => ({ ...state, [selectedId]: data }));
+                      } catch (error) {
+                        const detail = error?.response?.data?.detail || 'Failed to fetch detections';
+                        setVisionError(String(detail));
+                      } finally {
+                        setVisionLoading(false);
+                      }
+                    }}
+                  >
+                    Refresh detections
+                  </Button>
+                </div>
+                {visionError && <p className="text-xs text-red-400">{visionError}</p>}
               </div>
             </CardContent>
           </Card>

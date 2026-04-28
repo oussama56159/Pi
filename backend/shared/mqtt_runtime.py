@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import uuid
 from typing import Optional
 
 from backend.shared.mqtt_client import MQTTService
@@ -12,7 +14,8 @@ _mqtt: Optional[MQTTService] = None
 async def get_mqtt() -> MQTTService:
     global _mqtt
     if _mqtt is None:
-        _mqtt = MQTTService(client_id="gateway")
+        # Ensure each worker process has a unique MQTT client identity.
+        _mqtt = MQTTService(client_id=f"gateway-{os.getpid()}-{uuid.uuid4().hex[:8]}")
         await _mqtt.start()
     return _mqtt
 

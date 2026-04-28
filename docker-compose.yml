@@ -23,6 +23,20 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: aero-redis
+    command: redis-server --appendonly yes
+    ports:
+      - "${REDIS_HOST_PORT:-6379}:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - redis_data:/data
+
   # ── MQTT Broker ──
   emqx:
     image: emqx/emqx:5.5
@@ -60,6 +74,9 @@ services:
       POSTGRES_USER: aerocommand
       POSTGRES_PASSWORD: aerocommand_secret
       POSTGRES_DB: aerocommand
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""
       MQTT_BROKER_HOST: emqx
       MQTT_BROKER_PORT: "1883"
       JWT_SECRET_KEY: dev_jwt_secret_change_in_production
@@ -91,6 +108,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      redis:
+        condition: service_healthy
       emqx:
         condition: service_healthy
     command: >
@@ -119,6 +138,7 @@ services:
 
 volumes:
   pg_data:
+  redis_data:
   emqx_data:
 
 networks:

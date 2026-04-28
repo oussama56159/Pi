@@ -51,6 +51,25 @@ class TelemetryWebSocketManager:
                     del self._subscriptions[channel]
         logger.info(f"WS disconnected: removed from {len(channels)} channels")
 
+    async def subscribe(self, ws: WebSocket, channels: list[str]) -> None:
+        """Subscribe an existing connection to additional channels."""
+        if not channels:
+            return
+        async with self._lock:
+            for channel in channels:
+                self._subscriptions[channel].add(ws)
+                self._ws_channels[ws].add(channel)
+
+    async def unsubscribe(self, ws: WebSocket, channels: list[str]) -> None:
+        """Unsubscribe an existing connection from channels."""
+        if not channels:
+            return
+        async with self._lock:
+            for channel in channels:
+                self._subscriptions[channel].discard(ws)
+                if ws in self._ws_channels:
+                    self._ws_channels[ws].discard(channel)
+
     async def broadcast_to_channel(self, channel: str, data: dict) -> None:
         """Send data to all WebSocket connections subscribed to a channel."""
         subscribers = self._subscriptions.get(channel, set()).copy()

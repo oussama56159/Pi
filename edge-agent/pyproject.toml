@@ -14,6 +14,11 @@ dependencies = [
   "pymavlink>=2.4",
 ]
 
+[project.optional-dependencies]
+camera = [
+  "opencv-contrib-python-headless>=4.10",
+]
+
 [project.scripts]
 aerocommand-edge-agent = "aerocommand_edge_agent.main:main"
 

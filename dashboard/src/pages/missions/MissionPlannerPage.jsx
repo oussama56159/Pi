@@ -26,8 +26,10 @@ import Modal from '@/components/ui/Modal';
 import { useMissionStore } from '@/stores/missionStore';
 import { useFleetStore } from '@/stores/fleetStore';
 import { useTelemetryStore } from '@/stores/telemetryStore';
+import { useAuthStore } from '@/stores/authStore';
 import { missionAPI } from '@/lib/api/endpoints';
-import { MAP_CONFIG } from '@/config/constants';
+import { MAP_CONFIG, ROLES } from '@/config/constants';
+import { useMissionStream } from '@/lib/websocket/useMissionStream';
 import {
   computeMissionDistanceMeters,
   estimateBatteryThresholdPercent,
@@ -624,6 +626,7 @@ export default function MissionPlannerPage() {
 
   const vehicleTelemetry = useTelemetryStore((s) => s.vehicleTelemetry);
   const connectionStatus = useTelemetryStore((s) => s.connectionStatus);
+  const hasAnyRole = useAuthStore((s) => s.hasAnyRole);
 
   const [showNewMission, setShowNewMission] = useState(false);
   const [showEditMission, setShowEditMission] = useState(false);
@@ -729,6 +732,13 @@ export default function MissionPlannerPage() {
     if (fleetVehicles.length) return fleetVehicles;
     return vehicles.filter((v) => assignedVehicleIds.includes(v.id));
   }, [fleetVehicles, vehicles, assignedVehicleIds]);
+
+  const canPilotMission = hasAnyRole([ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.PILOT]);
+  const missionStreamVehicleId = useMemo(
+    () => launchVehicles[0]?.id || assignedVehicleIds[0] || null,
+    [launchVehicles, assignedVehicleIds]
+  );
+  useMissionStream(missionStreamVehicleId);
 
   const missionValidation = useMemo(() => validateMissionAgainstGeofence(waypoints, geofencePoints), [waypoints, geofencePoints]);
 
@@ -1364,8 +1374,20 @@ export default function MissionPlannerPage() {
                 icon={Upload}
                 loading={isUploadingMission}
                 onAction={handleUploadMission}
-                disabled={!selectedMissionId || waypoints.length === 0 || launchVehicles.length === 0 || isUploadingMission}
-                disabledReason={!selectedMissionId ? 'Load a mission first' : launchVehicles.length === 0 ? 'Assign a vehicle or select a fleet' : waypoints.length === 0 ? 'No waypoints to upload' : isUploadingMission ? 'Uploading...' : undefined}
+                disabled={!canPilotMission || !selectedMissionId || waypoints.length === 0 || launchVehicles.length === 0 || isUploadingMission}
+                disabledReason={
+                  !canPilotMission
+                    ? 'Pilot role required'
+                    : !selectedMissionId
+                      ? 'Load a mission first'
+                      : launchVehicles.length === 0
+                        ? 'Assign a vehicle or select a fleet'
+                        : waypoints.length === 0
+                          ? 'No waypoints to upload'
+                          : isUploadingMission
+                            ? 'Uploading...'
+                            : undefined
+                }
               >
                 Upload
               </ActionButton>
@@ -1376,8 +1398,18 @@ export default function MissionPlannerPage() {
                 icon={Download}
                 loading={isDownloadingMission}
                 onAction={handleDownloadMission}
-                disabled={launchVehicles.length !== 1 || isDownloadingMission}
-                disabledReason={launchVehicles.length === 0 ? 'Select a vehicle first' : launchVehicles.length !== 1 ? 'Select exactly one vehicle' : isDownloadingMission ? 'Downloading...' : undefined}
+                disabled={!canPilotMission || launchVehicles.length !== 1 || isDownloadingMission}
+                disabledReason={
+                  !canPilotMission
+                    ? 'Pilot role required'
+                    : launchVehicles.length === 0
+                      ? 'Select a vehicle first'
+                      : launchVehicles.length !== 1
+                        ? 'Select exactly one vehicle'
+                        : isDownloadingMission
+                          ? 'Downloading...'
+                          : undefined
+                }
               >
                 Download
               </ActionButton>
@@ -1775,7 +1807,14 @@ export default function MissionPlannerPage() {
           <CardHeader action={
             <div className="flex items-center gap-2">
               <Button size="sm" variant="secondary" onClick={runPreflightChecks}>Run Pre-flight</Button>
-              <Button size="sm" icon={Play} onClick={handleStartFleetMission} loading={isStartingMission} disabled={readinessSummary.total > 0 && launchPolicy === 'all_or_none' && readinessSummary.ready < readinessSummary.total}>
+              <Button
+                size="sm"
+                icon={Play}
+                onClick={handleStartFleetMission}
+                loading={isStartingMission}
+                disabled={!canPilotMission || (readinessSummary.total > 0 && launchPolicy === 'all_or_none' && readinessSummary.ready < readinessSummary.total)}
+                title={!canPilotMission ? 'Pilot role required' : undefined}
+              >
                 Sync Start
               </Button>
             </div>

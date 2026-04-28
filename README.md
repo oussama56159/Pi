@@ -1,154 +1,161 @@
 # AeroCommand
 
-**AeroCommand** is a full-stack cloud + edge platform for real-time drone and robot fleet management. It connects physical vehicles (via Pixhawk flight controllers and Raspberry Pi edge agents) to a centralized backend, and delivers live telemetry, command & control, mission planning, and alerting through both a **web dashboard** and a **mobile app**.
+AeroCommand is a cloud-plus-edge platform for operating autonomous drone and robot fleets.
 
----
+It combines:
+- A FastAPI backend with MQTT ingestion and WebSocket fanout
+- A React dashboard for operations and administration
+- A Flutter mobile client for field operators
+- A Python edge agent running near the vehicle (MAVLink <-> MQTT bridge)
 
-## What it does
+## Project Overview
 
-- **Real-time telemetry** — Sensor data (GPS, altitude, speed, attitude, battery, battery temperature, etc.) flows from each drone's Pixhawk flight controller over MAVLink to a Raspberry Pi, which publishes it via MQTT to the cloud backend. The backend validates, stores, caches, and broadcasts the data over WebSocket to all connected clients in real time.
-- **Fleet management** — Register, organize, and monitor all your drones and robots. Group vehicles into fleets, assign users to fleets, and view live status for every vehicle.
-- **Mission planning** — Create waypoint-based missions with a visual planner (map-based), assign missions to vehicles, upload them, and track execution status live.
-- **Command & control** — Send commands to vehicles in real time (arm, disarm, takeoff, land, RTL, emergency stop, etc.) from the dashboard or mobile app. Commands are routed through MQTT to the edge agent, which translates them into MAVLink instructions for the Pixhawk.
-- **Alerts & rules** — Configurable alert rules trigger on telemetry conditions (low battery, geofence breach, signal loss, etc.). Alerts are pushed in real time to all connected clients and stored for review.
-- **Analytics** — Historical telemetry charts, flight hours, mission statistics, and incident reports.
-- **Multi-tenant & role-based access** — Organizations, role-based permissions (Super Admin, Admin, Operator, Pilot, Viewer), and user management built in.
-- **Mobile app** — A Flutter (Android/iOS) companion app with the same telemetry, fleet, mission, alert, and command features.
-- **Edge agent** — A lightweight Python agent that runs on a Raspberry Pi (including Pi Zero), reads MAVLink from a Pixhawk, and bridges telemetry, heartbeat, and mission upload/download traffic to the cloud over MQTT.
+Primary capabilities:
+- Real-time telemetry ingestion from edge devices
+- Fleet and user/organization management (RBAC)
+- Mission planning, assignment, upload/download, and progress tracking
+- Command dispatch and ACK/result pipeline
+- Alert ingestion, rules, acknowledgment, and streaming to clients
 
----
+Current architecture is monolith-style API routing in one service process (`backend/services/gateway/main.py`) with domain modules mounted under `/api/v1`.
 
-## Architecture
+## Architecture (Text Diagram)
 
-```
-                                    ┌──────────────┐
-                                    │  Dashboard   │  React / Vite
-                                    │  (Web UI)    │  Real-time charts, map, controls
-                                    └──────┬───────┘
-                                           │ HTTP + WebSocket
-                                           ▼
-┌──────────┐    MAVLink     ┌───────────┐  MQTT   ┌──────────────────┐      SQL      ┌──────────────────┐
-│ Pixhawk  │──── UART ─────▶│  Pi Zero  │────────▶│  Backend API     │───────────────▶│  PostgreSQL      │
-│ (FC)     │   /dev/serial0 │  (Edge    │  EMQX   │  (FastAPI)       │               │  history + state │
-│          │                │   Agent)  │◀────────│                  │               │                  │
-└──────────┘                └───────────┘ cmds    └──────────────────┘               └──────────────────┘
-                                                           │ WebSocket
-                                                           ▼
-                                                   ┌──────────────┐
-                                                   │  Mobile App  │  Flutter (Android/iOS)
-                                                   └──────────────┘
-```
+```text
+Pixhawk / vehicle bus
+  -> MAVLink (serial/udp/tcp)
+  -> edge-agent (Python, pymavlink)
+  -> MQTT publish to EMQX (telemetry, heartbeat, mission/status, command ACK)
+  -> backend MQTT listeners (telemetry/mission/command/alert)
+  -> PostgreSQL + in-memory runtime cache
+  -> WebSocket push (org/vehicle/alerts channels)
+  -> Dashboard (React) and Mobile (Flutter)
 
-**Data flow:** Pixhawk sensors → MAVLink (serial) → Raspberry Pi edge agent → MQTT (EMQX broker) → Backend API → WebSocket → Dashboard / Mobile App
-
----
-
-## Tech stack
-
-| Layer | Technology |
-|-------|-----------|
-| **Backend API** | Python, FastAPI, SQLAlchemy (async), Pydantic |
-| **Databases** | PostgreSQL (relational + telemetry history), in-memory cache (latest snapshots / runtime state) |
-| **Message broker** | EMQX (MQTT) |
-| **Web dashboard** | React 18, Vite, Tailwind CSS, Zustand, Recharts, Leaflet |
-| **Mobile app** | Flutter / Dart (Android & iOS) |
-| **Edge agent** | Python, pymavlink, aiomqtt |
-| **Infrastructure** | Docker Compose, Kubernetes, Helm, GitHub Actions CI/CD |
-
----
-
-## Repository structure
-
-```
-backend/           FastAPI API gateway + service modules (auth, fleet, mission, telemetry, alert, command)
-dashboard/         React/Vite web UI
-mobile/            Flutter mobile app (Android & iOS)
-edge-agent/        Raspberry Pi edge agent (Pixhawk MAVLink ↔ MQTT)
-shared_python/     Shared Python library (schemas, MQTT topics, config)
-testMQTT/          Drone & robot simulators for local testing without hardware
-infra/             Kubernetes manifests, Helm chart, EMQX config
-scripts/           PowerShell helper scripts for dev
+Client actions (web/mobile)
+  -> REST API (FastAPI)
+  -> DB writes + MQTT publishes (command/mission upload)
+  -> edge-agent subscriptions
+  -> autopilot execution + ACK/status back to cloud
 ```
 
----
+## Repository Layout
 
-## Features by module
+Top-level directories:
+- `backend/`: FastAPI gateway and domain services (`auth`, `fleet`, `telemetry`, `mission`, `command`, `alert`)
+- `dashboard/`: React + Vite SPA
+- `mobile/`: Flutter app
+- `edge-agent/`: Python edge runtime for MAVLink + camera stream + MQTT bridge
+- `shared_python/`: shared Python schemas/topics/config used by backend and edge-agent
+- `infra/`: EMQX config, K8s manifests, Helm chart
+- `scripts/`: PowerShell helper scripts for local operations
+- `testMQTT/`: drone/robot simulators for local MQTT testing
+- `models/`: model notes/documentation
 
-### Backend API (`backend/`)
+## Module Interaction Map
 
-| Module | Endpoints | Description |
-|--------|-----------|-------------|
-| **Auth** | `/api/v1/auth/*` | JWT login/logout/refresh, user CRUD, organization CRUD, role-based access (Super Admin, Admin, Operator, Pilot, Viewer), password recovery |
-| **Fleet** | `/api/v1/fleet/*` | Vehicle CRUD, fleet groups, fleet-user assignments, vehicle status tracking |
-| **Telemetry** | `/api/v1/telemetry/*` | Latest snapshot (in-memory), historical queries (PostgreSQL), real-time WebSocket streaming |
-| **Missions** | `/api/v1/missions/*` | Mission CRUD, waypoint graph builder, assign/unassign vehicles, upload to vehicle, status tracking |
-| **Commands** | `/api/v1/commands/*` | Dispatch commands to vehicles via MQTT (arm, disarm, takeoff, land, RTL, etc.), command history |
-| **Alerts** | `/api/v1/alerts/*` | Rule engine, alert CRUD, acknowledge/resolve, real-time push via WebSocket |
+Backend internal flow:
+- `backend/services/gateway/main.py`: app lifecycle, middleware, MQTT listeners startup
+- `backend/services/gateway/routes/proxy.py`: mounts service routers
+- `backend/services/telemetry/mqtt_listener.py`: subscribes to telemetry topics
+- `backend/services/telemetry/service.py`: validates frame, stores history, updates cache + vehicle state, broadcasts WebSocket
+- `backend/services/mission/mqtt_listener.py`: mission status/progress updates from edge
+- `backend/services/command/mqtt_listener.py`: consumes command ACK/response from edge
+- `backend/services/alert/mqtt_listener.py`: consumes alert messages and broadcasts alerts stream
 
-### Web Dashboard (`dashboard/`)
+Shared runtime components:
+- `backend/shared/mqtt_runtime.py`: shared MQTT connection + subscriptions
+- `backend/shared/runtime_cache.py`: in-memory snapshots/rate-limit/session/audit cache
+- `backend/shared/database/postgres.py`: async engine/session/schema bootstrap helpers
 
-- **Dashboard** — Overview with fleet stats, active alerts, recent missions
-- **Fleet** — Vehicle list, detail pages with live telemetry cards
-- **Live Map** — Real-time vehicle positions on an interactive Leaflet map
-- **Telemetry** — Per-vehicle telemetry charts (altitude, speed, battery, etc.) with time range selection and full-screen mode
-- **Mission Planner** — Visual waypoint editor on map, mission assignment and execution controls
-- **Control Panel** — Direct command interface for pilots (arm, takeoff, land, RTL, emergency stop)
-- **Alerts** — Live alert feed with severity filtering, acknowledgement, and resolution
-- **Analytics** — Historical charts and statistics
-- **User Management** — Admin panel for creating/editing users and organizations
-- **Settings** — Notification preferences, telemetry display settings, theme toggle
+Frontend interaction:
+- Dashboard API clients in `dashboard/src/lib/api/*`
+- Dashboard WebSocket hooks in `dashboard/src/lib/websocket/*`
+- Dashboard pages under `dashboard/src/pages/*`
 
-### Mobile App (`mobile/`)
+Mobile interaction:
+- HTTP layer in `mobile/aerocommand_mobile/lib/src/api/*`
+- WebSocket + local history in `mobile/aerocommand_mobile/lib/src/realtime/realtime_controller.dart`
+- App screens/tabs in `mobile/aerocommand_mobile/lib/src/ui/*`
 
-- Same core features: Dashboard, Fleet, Telemetry, Alerts, Missions
-- Real-time WebSocket telemetry streaming
-- Dark/light theme
-- Demo mode for offline testing
-- Profile management
+Edge interaction:
+- `edge-agent/src/aerocommand_edge_agent/main.py`: orchestrates readers, MQTT bridge, handlers
+- `edge-agent/src/aerocommand_edge_agent/mqtt_bridge.py`: MQTT publish/subscribe bridging
+- `edge-agent/src/aerocommand_edge_agent/mavlink_reader.py`: MAVLink read/wait primitives
 
-### Edge Agent (`edge-agent/`)
+## Runtime Data Flows
 
-- Reads MAVLink messages from Pixhawk (HEARTBEAT, ATTITUDE, GPS_RAW_INT, GLOBAL_POSITION_INT, SYS_STATUS, BATTERY_STATUS)
-- Converts to structured `TelemetryFrame` JSON, including GPS, attitude, battery, and battery temperature when available
-- Publishes telemetry and heartbeat to MQTT at configurable rates
-- Bridges mission upload and mission download between MQTT and MAVLink
-- Receives command requests from MQTT and currently acknowledges them; full MAVLink command execution is still a work item
-- Runs as a systemd service on Raspberry Pi
+Telemetry flow:
+1. Edge publishes `aerocommand/{org}/telemetry/{vehicle}/raw`
+2. Backend validates with Pydantic (`TelemetryFrame`)
+3. Stores row in `telemetry_history` (PostgreSQL)
+4. Updates runtime cache + vehicle live status fields
+5. Broadcasts to WebSocket channels (`vehicle:*`, `org:*`)
 
-### Simulators (`testMQTT/`)
+Mission flow:
+1. Operator creates mission and assignments via REST
+2. Upload request published to `aerocommand/{org}/mission/{vehicle}/upload`
+3. Edge uploads to autopilot, publishes status/progress
+4. Backend updates assignment/progress and pushes WebSocket mission events
 
-- `drone_simulator.py` — Simulates a drone with realistic flight physics, GPS movement, battery drain, and link loss
-- `robot_simulator.py` — Simulates a ground robot with patrol patterns
-- Both support **AeroCommand mode** to publish directly to the backend's MQTT topics (no hardware needed)
+Command flow:
+1. Client sends command through REST
+2. Backend publishes to `aerocommand/{org}/command/{vehicle}/request`
+3. Edge executes MAVLink command and publishes ACK/response
+4. Backend persists/propagates command state
 
----
+Alert flow:
+1. Telemetry rules and/or edge system alerts generate alerts
+2. Alerts saved/queryable via `/api/v1/alerts`
+3. Alert stream broadcast over WebSocket `alerts:{org}`
 
-## Quick start
+## Technology Stack
 
-### Option A: Docker (recommended)
+- Backend: Python 3.11, FastAPI, SQLAlchemy async, Pydantic, aiomqtt
+- Data: PostgreSQL (history + relational state), in-memory process cache
+- Messaging: EMQX (MQTT)
+- Dashboard: React 18, Vite, Zustand, Recharts, Leaflet
+- Mobile: Flutter, Provider, flutter_map
+- Edge: Python, pymavlink, aiomqtt, optional OpenCV camera stream
+- Deployment: Docker Compose, Kubernetes manifests, Helm, GitHub Actions
 
-**Prerequisites:** Docker Desktop
+## Local Development Setup
+
+### Option A: Docker Compose (Recommended)
+
+Prerequisites:
+- Docker Desktop
+
+From repository root:
 
 ```bash
 docker compose up -d --build
 ```
 
-| Service | URL |
-|---------|-----|
-| Dashboard | http://localhost:3000 |
-| API | http://localhost:8000 |
-| API Docs | http://localhost:8000/docs |
-| EMQX Dashboard | http://localhost:18083 |
+Default endpoints:
+- Dashboard: `http://localhost:3000`
+- API: `http://localhost:8000`
+- API docs (debug): `http://localhost:8000/docs`
+- EMQX dashboard: `http://localhost:18083`
 
-**Default login:**
+Default dev owner credentials:
 - Email: `owner@makerskills.com`
 - Password: `makerskills_owner_change_me`
 
-### Option B: Without Docker
+Windows helper scripts:
+- `scripts/start-dev.ps1`
+- `scripts/stop-dev.ps1`
+- `scripts/restart-dev.ps1`
+- `scripts/get-uuids.ps1`
 
-**Prerequisites:** Python 3.11+, Node 20+, PostgreSQL, and EMQX running locally
+### Option B: Run services individually
 
-**Backend:**
+Prerequisites:
+- Python 3.11+
+- Node.js 20+
+- PostgreSQL
+- EMQX
+
+Backend:
 
 ```bash
 cd backend
@@ -159,7 +166,7 @@ pip install fastapi[standard] uvicorn[standard] sqlalchemy[asyncio] asyncpg alem
 uvicorn backend.services.gateway.main:app --reload --port 8000
 ```
 
-**Dashboard:**
+Dashboard:
 
 ```bash
 cd dashboard
@@ -167,96 +174,180 @@ npm ci
 npm run dev
 ```
 
-Dashboard will be at http://localhost:5173.
-
-### Helper scripts (Windows)
-
-```powershell
-./scripts/start-dev.ps1     # Start Docker stack
-./scripts/stop-dev.ps1      # Stop Docker stack
-./scripts/restart-dev.ps1   # Restart Docker stack
-```
-
----
-
-## Connecting a real drone
-
-Use this flow for a Pixhawk + Raspberry Pi Zero setup:
-
-1. Configure Pixhawk TELEM2 for MAVLink2 at 57600 baud in Mission Planner or QGroundControl.
-2. Wire Pixhawk TELEM2 TX, RX, and GND to the Pi UART (`/dev/serial0` on Raspberry Pi OS).
-3. Install the shared package and edge agent from the repo root:
+Mobile:
 
 ```bash
-cd shared_python
-sudo python3 -m pip install -e . --break-system-packages
-cd ../edge-agent
-sudo python3 -m pip install -e . --break-system-packages
+cd mobile/aerocommand_mobile
+flutter pub get
+flutter run
 ```
 
-4. Create a vehicle in the dashboard and copy the Vehicle UUID and Organization ID.
-5. Put those values into the edge agent env file and point it at your MQTT broker:
+Edge-agent (editable install):
 
 ```bash
-ORG_ID=<your org UUID>
-VEHICLE_ID=<your vehicle UUID>
-MAVLINK_CONNECTION=/dev/serial0
-MAVLINK_BAUD=57600
-MQTT_HOST=<your server IP or domain>
-MQTT_PORT=1883
-MQTT_USERNAME=
-MQTT_PASSWORD=
-TELEMETRY_HZ=2
-HEARTBEAT_HZ=1
+pip install -e ./shared_python
+pip install -e ./edge-agent
 ```
 
-6. Start the edge agent and confirm the vehicle goes online in Fleet Management.
-7. Verify live GPS, heading, altitude, satellites, voltage, current, and battery temperature in the vehicle detail page.
+## Environment Variables
 
-**Notes:**
+### Backend (`backend/shared/config.py` + compose)
 
-- Telemetry and mission upload/download are implemented.
-- Command dispatch is still acknowledged by the edge agent but not yet translated into real Pixhawk control commands.
+Core:
+- `ENVIRONMENT` (`development|staging|production`)
+- `DEBUG`
+- `AUTO_CREATE_DB`
 
-**Test without hardware** using the drone simulator:
+PostgreSQL:
+- `POSTGRES_HOST`
+- `POSTGRES_PORT`
+- `POSTGRES_USER`
+- `POSTGRES_PASSWORD`
+- `POSTGRES_DB`
 
-```bash
-set AEROCOMMAND_ENABLED=true
-set AEROCOMMAND_ORG_ID=<your org UUID>
-set AEROCOMMAND_VEHICLE_ID=<your vehicle UUID>
-python testMQTT/drone_simulator.py
-```
+MQTT:
+- `MQTT_BROKER_HOST`
+- `MQTT_BROKER_PORT`
+- `MQTT_USERNAME`
+- `MQTT_PASSWORD`
+- `MQTT_CLIENT_ID_PREFIX`
+- `MQTT_QOS`
 
-For Windows, use the helper script:
+Auth:
+- `JWT_SECRET_KEY`
+- `JWT_ALGORITHM`
+- `JWT_ACCESS_TOKEN_EXPIRE_MINUTES`
+- `JWT_REFRESH_TOKEN_EXPIRE_DAYS`
 
-```powershell
-./scripts/start-drone-sim.ps1 -OrgId <your org UUID> -VehicleId <your vehicle UUID>
-```
+CORS:
+- `CORS_ORIGINS`
+- `CORS_ORIGIN_REGEX`
 
----
+Owner seeding:
+- `SEED_OWNER_ENABLED`
+- `OWNER_EMAIL`
+- `OWNER_PASSWORD`
+- `OWNER_NAME`
+- `OWNER_CREATE_ORG`
+- `OWNER_ORG_NAME`
+- `OWNER_ORG_SLUG`
 
-## MQTT topics
+SMTP/password recovery:
+- `SUPPORT_EMAIL`
+- `SMTP_HOST`
+- `SMTP_PORT`
+- `SMTP_USERNAME`
+- `SMTP_PASSWORD`
+- `SMTP_FROM_EMAIL`
+- `SMTP_USE_STARTTLS`
+- `SMTP_USE_SSL`
 
-| Topic | Direction | Description |
-|-------|-----------|-------------|
-| `aerocommand/{org}/telemetry/{vehicle}/raw` | Edge → Cloud | Telemetry frames |
-| `aerocommand/{org}/telemetry/{vehicle}/heartbeat` | Edge → Cloud | Heartbeat pings |
-| `aerocommand/{org}/command/{vehicle}/request` | Cloud → Edge | Command dispatch |
-| `aerocommand/{org}/command/{vehicle}/ack` | Edge → Cloud | Command acknowledgement |
+### Dashboard (`dashboard/.env.example`)
 
----
+- `VITE_API_BASE_URL`
+- `VITE_WS_BASE_URL`
+- `VITE_TELEMETRY_WS_URL`
+- `VITE_MQTT_BROKER_URL`
+- `VITE_MOCK_MODE`
+- `VITE_APP_TITLE`
+- `VITE_SUPPORT_EMAIL`
+
+### Edge Agent (`edge-agent/src/aerocommand_edge_agent/config.py`)
+
+Identity:
+- `ORG_ID`
+- `VEHICLE_ID`
+
+MAVLink:
+- `MAVLINK_CONNECTION`
+- `MAVLINK_BAUD`
+- `MAVLINK_SOURCE_SYSTEM`
+
+MQTT:
+- `MQTT_HOST`
+- `MQTT_PORT`
+- `MQTT_USERNAME`
+- `MQTT_PASSWORD`
+- `MQTT_CLIENT_ID`
+- `MQTT_KEEPALIVE`
+- `MQTT_QOS`
+
+Rates:
+- `TELEMETRY_HZ`
+- `HEARTBEAT_HZ`
+
+Battery fallback:
+- `BATTERY_VOLTAGE_EMPTY`
+- `BATTERY_VOLTAGE_FULL`
+
+Camera stream:
+- `CAMERA_STREAM_ENABLED`
+- `CAMERA_STREAM_HOST`
+- `CAMERA_STREAM_PORT`
+- `CAMERA_STREAM_PATH`
+- `CAMERA_STREAM_CAMERA_INDEX`
+- `CAMERA_STREAM_FRAME_WIDTH`
+- `CAMERA_STREAM_FRAME_HEIGHT`
+- `CAMERA_STREAM_FPS`
+- `CAMERA_STREAM_JPEG_QUALITY`
+- `CAMERA_STREAM_TOKEN`
+- `CAMERA_STREAM_PUBLIC_URL`
+- `DRONE_IP`
+
+## API and System Surface
+
+Primary REST prefixes (mounted under `/api/v1`):
+- `/auth`
+- `/fleet`
+- `/telemetry`
+- `/missions`
+- `/commands`
+- `/alerts`
+- `/vision`
+- `/actions`
+
+WebSocket endpoint:
+- `/api/v1/telemetry/ws?channels=org:{org},alerts:{org}`
+
+Health endpoints:
+- `/health`
+- `/health/live`
+- `/health/ready`
+
+## YOLOv8 Video Analytics (Backend CPU)
+
+The platform now supports backend-side YOLOv8 inference for camera streams coming from edge devices.
+
+Flow:
+1. Configure a camera stream URL per vehicle in the dashboard Camera page.
+2. Start YOLO analytics from the Camera page.
+3. The backend ingests the stream, runs YOLOv8 (`person`, `dog`, `sheep`, `cow`), and exposes an annotated MJPEG stream.
+4. The dashboard renders the annotated stream with bounding boxes and detection counts.
+
+Vision endpoints (`/api/v1/vision`):
+- `POST /streams/{vehicle_id}/start`
+- `POST /streams/{vehicle_id}/stop`
+- `GET /streams/{vehicle_id}/annotated.mjpg`
+- `GET /streams/{vehicle_id}/detections/latest`
+
+Backend vision settings (in `backend/shared/config.py`):
+- `VISION_ENABLED`
+- `VISION_MODEL_NAME` (default `yolov8n.pt`)
+- `VISION_CONFIDENCE_THRESHOLD`
+- `VISION_ALLOWED_CLASSES` (default `person,dog,sheep,cow`)
+- `VISION_FRAME_SKIP`
+- `VISION_OUTPUT_FPS`
+- `VISION_MAX_WIDTH`
 
 ## Deployment
 
-### Production Docker Compose
+### Production Compose
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d
 ```
 
-### Kubernetes
-
-**Raw manifests** (in `infra/k8s/`):
+### Kubernetes Manifests
 
 ```bash
 kubectl apply -f infra/k8s/namespace.yaml
@@ -269,7 +360,7 @@ kubectl apply -f infra/k8s/dashboard.yaml
 kubectl apply -f infra/k8s/ingress.yaml
 ```
 
-**Helm** (chart in `infra/helm/aerocommand/`):
+### Helm
 
 ```bash
 helm upgrade --install aerocommand ./infra/helm/aerocommand \
@@ -277,32 +368,37 @@ helm upgrade --install aerocommand ./infra/helm/aerocommand \
   --values ./infra/helm/aerocommand/values.yaml
 ```
 
-### CI/CD (GitHub Actions)
+### CI/CD Pipelines
 
-- `.github/workflows/ci.yml` — Lint, test, build, push Docker images to GHCR
-- `.github/workflows/cd.yml` — Deploy to staging/production via Helm
+- `.github/workflows/ci.yml`: lint, tests, frontend build, docker build/push to GHCR
+- `.github/workflows/cd.yml`: staging/prod deploy and migration job
 
----
+## Contribution Guide
 
-## Security model
+Recommended contribution workflow:
+1. Create a feature branch from `develop`.
+2. Keep commits scoped to one concern (backend, dashboard, mobile, edge, infra).
+3. Run checks before PR:
+   - Backend lint/tests
+   - Dashboard lint/build
+   - Mobile analyze/tests where relevant
+4. Open PR to `develop` with:
+   - summary
+   - risk notes
+   - screenshots or API examples if behavior changed
+5. Require green CI before merge.
 
-- Public registration is disabled
-- A single owner account is seeded on first startup (configurable via environment variables)
-- Owner creates organizations and admin users
-- Role-based access: **Super Admin** > **Admin** > **Operator** > **Pilot** > **Viewer**
-- JWT-based authentication with access + refresh tokens
-- Rate limiting and CORS middleware
+Conventions:
+- Preserve API path prefixes and schema compatibility when possible.
+- Keep shared contracts in `shared_python/src/backend/shared/schemas/*` aligned with consumers.
+- Do not commit secrets; use env vars or cluster secret stores.
 
-**Default dev owner credentials:**
+## Known Constraints and Gaps
 
-| Setting | Default | Env var |
-|---------|---------|---------|
-| Email | `owner@makerskills.com` | `OWNER_EMAIL` |
-| Password | `makerskills_owner_change_me` | `OWNER_PASSWORD` |
-| Name | `MakerSkills Owner` | `OWNER_NAME` |
-
----
+- `backend/services/vision/` is present as a directory but currently has no tracked implementation files.
+- `backend/services/telemetry/mqtt_client.py` exists but runtime path uses shared MQTT runtime listeners instead.
+- Some default development secrets are intentionally insecure and must be overridden in production.
 
 ## License
 
-This project was built as a university/group project (PI Group).
+Proprietary (project/course context). Consult maintainers before external redistribution.

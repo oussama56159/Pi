@@ -110,7 +110,7 @@ async def _cache_in_memory(frame: TelemetryFrame) -> None:
             satellites=frame.gps.satellites_visible,
             gps_fix=frame.gps.fix_type,
         )
-        get_runtime_cache().store_telemetry_snapshot(
+        await get_runtime_cache().store_telemetry_snapshot(
             frame.vehicle_id,
             snapshot.model_dump(),
             ttl_seconds=300,
@@ -134,8 +134,8 @@ async def process_heartbeat(vehicle_id: str, payload: dict) -> None:
     try:
         heartbeat_connected = bool(payload.get("connected", True))
         cache = get_runtime_cache()
-        cache.set_heartbeat(vehicle_id, datetime.now(timezone.utc).isoformat(), ttl_seconds=30)
-        cache.set_vehicle_status(vehicle_id, "online" if heartbeat_connected else "offline", ttl_seconds=60)
+        await cache.set_heartbeat(vehicle_id, datetime.now(timezone.utc).isoformat(), ttl_seconds=30)
+        await cache.set_vehicle_status(vehicle_id, "online" if heartbeat_connected else "offline", ttl_seconds=60)
 
         if heartbeat_connected:
             await _sync_vehicle_online_state(vehicle_id)
@@ -233,7 +233,7 @@ async def get_telemetry_history(
 async def get_latest_snapshot(vehicle_id: str) -> dict | None:
     """Get latest telemetry snapshot from in-memory cache."""
     try:
-        return get_runtime_cache().get_telemetry_snapshot(vehicle_id)
+        return await get_runtime_cache().get_telemetry_snapshot(vehicle_id)
     except Exception:
         return None
 

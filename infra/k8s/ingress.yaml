@@ -85,9 +85,13 @@ spec:
         - podSelector:
             matchLabels:
               app: emqx
+        - podSelector:
+            matchLabels:
+              app: redis
       ports:
         - port: 5432
         - port: 1883
+        - port: 6379
     - to:   # DNS resolution
         - namespaceSelector: {}
       ports:

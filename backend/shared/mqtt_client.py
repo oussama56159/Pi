@@ -12,6 +12,7 @@ from typing import Any, Callable, Coroutine
 import aiomqtt
 
 from backend.shared.config import get_base_settings
+from backend.shared.retry import retry_async
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,12 @@ class MQTTService:
         self._handlers[topic] = handler
         if self._client:
             settings = get_base_settings()
-            await self._client.subscribe(topic, qos=settings.MQTT_QOS)
+            await retry_async(
+                lambda: self._client.subscribe(topic, qos=settings.MQTT_QOS),
+                retries=3,
+                base_delay_s=0.2,
+                retry_on=(aiomqtt.MqttError,),
+            )
             logger.info(f"Subscribed to {topic}")
 
     async def publish(self, topic: str, payload: dict | str, qos: int | None = None, retain: bool = False) -> None:
@@ -104,16 +110,21 @@ class MQTTService:
 
                     # Re-subscribe to all registered topics
                     for topic in self._handlers:
-                        await client.subscribe(topic, qos=settings.MQTT_QOS)
+                        await retry_async(
+                            lambda topic=topic: client.subscribe(topic, qos=settings.MQTT_QOS),
+                            retries=3,
+                            base_delay_s=0.2,
+                            retry_on=(aiomqtt.MqttError,),
+                        )
 
                     # Listen for messages
                     async for message in client.messages:
                         await self._dispatch(message)
 
             except aiomqtt.MqttError as e:
-                logger.error(f"MQTT connection error: {e}. Reconnecting in 5s...")
+                logger.error(f"MQTT connection error: {e}. Reconnecting with backoff...")
                 self._client = None
-                await asyncio.sleep(5)
+                await asyncio.sleep(1.5)
             except Exception as e:
                 logger.exception(f"MQTT unexpected error: {e}")
                 self._client = None
@@ -129,10 +140,16 @@ class MQTTService:
                     self._publish_queue.get(), timeout=1.0
                 )
                 if self._client:
-                    await self._client.publish(
-                        topic, payload.encode("utf-8") if isinstance(payload, str) else payload,
-                        qos=qos if qos is not None else settings.MQTT_QOS,
-                        retain=retain,
+                    await retry_async(
+                        lambda: self._client.publish(
+                            topic,
+                            payload.encode("utf-8") if isinstance(payload, str) else payload,
+                            qos=qos if qos is not None else settings.MQTT_QOS,
+                            retain=retain,
+                        ),
+                        retries=3,
+                        base_delay_s=0.2,
+                        retry_on=(aiomqtt.MqttError,),
                     )
                 else:
                     # Re-queue if not connected

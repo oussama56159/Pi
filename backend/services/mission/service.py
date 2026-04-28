@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 from uuid import UUID
@@ -40,6 +41,12 @@ from backend.shared.schemas.mission_graph import (
 )
 from backend.shared.mqtt_topics import MQTTTopics
 from backend.shared.mqtt_runtime import get_mqtt
+from backend.shared.retry import retry_async
+from backend.shared.metrics import (
+    MISSION_DOWNLOAD_TOTAL,
+    MISSION_UPLOAD_TOTAL,
+    MQTT_PUBLISH_LATENCY_SECONDS,
+)
 from backend.services.telemetry.websocket_manager import ws_manager
 
 from backend.services.fleet.models import FleetUserAssignment, Vehicle
@@ -370,7 +377,13 @@ async def update_mission_status(
     )
 
 
-async def upload_mission_to_vehicle(db: AsyncSession, org_id: UUID, data: MissionUploadRequest) -> dict:
+async def upload_mission_to_vehicle(
+    db: AsyncSession,
+    org_id: UUID,
+    data: MissionUploadRequest,
+    *,
+    request_id: str | None = None,
+) -> dict:
     """Publish mission to MQTT for edge agent to upload to Pixhawk."""
     mission = await _get_mission_response(db, data.mission_id, org_id)
     if not mission.waypoints:
@@ -383,7 +396,7 @@ async def upload_mission_to_vehicle(db: AsyncSession, org_id: UUID, data: Missio
     topic = MQTTTopics.mission_upload(str(org_id), str(data.vehicle_id))
 
     event = MissionUploadEvent(
-        request_id=str(uuid4()),
+        request_id=request_id or str(uuid4()),
         org_id=str(org_id),
         vehicle_id=str(data.vehicle_id),
         mission=mission,
@@ -392,7 +405,9 @@ async def upload_mission_to_vehicle(db: AsyncSession, org_id: UUID, data: Missio
     payload = event.model_dump(mode="json")
 
     mqtt = await get_mqtt()
-    await mqtt.publish(topic, payload)
+    started = time.perf_counter()
+    await retry_async(lambda: mqtt.publish(topic, payload), retries=4, base_delay_s=0.25)
+    MQTT_PUBLISH_LATENCY_SECONDS.labels("mission_upload").observe(time.perf_counter() - started)
     logger.info(f"Mission {data.mission_id} published for upload to vehicle {data.vehicle_id} on {topic}")
 
     # Update status
@@ -402,6 +417,7 @@ async def upload_mission_to_vehicle(db: AsyncSession, org_id: UUID, data: Missio
     m.vehicle_id = data.vehicle_id
     await db.flush()
 
+    MISSION_UPLOAD_TOTAL.labels("accepted").inc()
     return {"status": "uploading", "mission_id": str(data.mission_id), "vehicle_id": str(data.vehicle_id)}
 
 
@@ -412,31 +428,35 @@ async def download_mission_from_vehicle(
     *,
     user: dict | None = None,
     timeout_s: float = 30.0,
+    request_id: str | None = None,
 ) -> MissionResponse:
     """Request current mission from a vehicle via MQTT → edge agent → MAVLink."""
     await _assert_vehicle_access(db, org_id, data.vehicle_id, user)
     await _ensure_mission_download_listener()
 
-    request_id = str(uuid4())
+    req_id = request_id or str(uuid4())
     now = datetime.now(timezone.utc)
     topic = MQTTTopics.mission_download_request(str(org_id), str(data.vehicle_id))
     mqtt = await get_mqtt()
 
     loop = asyncio.get_running_loop()
     fut: asyncio.Future[dict] = loop.create_future()
-    _mission_download_pending[request_id] = fut
+    _mission_download_pending[req_id] = fut
     try:
         req_event = MissionDownloadRequestEvent(
-            request_id=request_id,
+            request_id=req_id,
             org_id=str(org_id),
             vehicle_id=str(data.vehicle_id),
             timestamp=now,
         )
-        await mqtt.publish(topic, req_event.model_dump(mode="json"))
+        started = time.perf_counter()
+        await retry_async(lambda: mqtt.publish(topic, req_event.model_dump(mode="json")), retries=4, base_delay_s=0.25)
+        MQTT_PUBLISH_LATENCY_SECONDS.labels("mission_download").observe(time.perf_counter() - started)
 
         try:
             payload = await asyncio.wait_for(fut, timeout=timeout_s)
         except asyncio.TimeoutError:
+            MISSION_DOWNLOAD_TOTAL.labels("timeout").inc()
             raise HTTPException(status_code=504, detail="Timed out waiting for mission download response")
 
         resp = MissionDownloadResponseEvent.model_validate(payload)
@@ -452,9 +472,10 @@ async def download_mission_from_vehicle(
             MissionCreate(name=mission_name, vehicle_id=data.vehicle_id, waypoints=resp.waypoints),
             user=user,
         )
+        MISSION_DOWNLOAD_TOTAL.labels("accepted").inc()
         return created
     finally:
-        _mission_download_pending.pop(request_id, None)
+        _mission_download_pending.pop(req_id, None)
 
 
 async def get_mission_graph(
@@ -744,7 +765,7 @@ async def _emit_assignment_updates(org_id: UUID, assignments: list[MissionAssign
             "assigned_at": assignment.assigned_at.isoformat(),
         }
         topic = MQTTTopics.mission_status(str(org_id), str(assignment.vehicle_id))
-        await mqtt.publish(topic, payload)
+        await retry_async(lambda: mqtt.publish(topic, payload), retries=4, base_delay_s=0.25)
         await ws_manager.broadcast_mission(str(assignment.vehicle_id), str(org_id), payload)
 
 

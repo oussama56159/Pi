@@ -45,6 +45,11 @@ class BaseServiceSettings(BaseSettings):
             f"@{self.POSTGRES_HOST}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         )
 
+    # ── Redis ──
+    REDIS_HOST: str = "localhost"
+    REDIS_PORT: int = 6379
+    REDIS_PASSWORD: str | None = None
+
     # ── MQTT (EMQX) ──
     MQTT_BROKER_HOST: str = "localhost"
     MQTT_BROKER_PORT: int = 1883
@@ -87,6 +92,15 @@ class BaseServiceSettings(BaseSettings):
     SMTP_FROM_EMAIL: str | None = None
     SMTP_USE_STARTTLS: bool = True
     SMTP_USE_SSL: bool = False
+
+    # ── Vision / video analytics ──
+    VISION_ENABLED: bool = True
+    VISION_MODEL_NAME: str = "yolov8n.pt"
+    VISION_CONFIDENCE_THRESHOLD: float = Field(default=0.35, ge=0.05, le=0.99)
+    VISION_ALLOWED_CLASSES: str = "person,dog,sheep,cow"
+    VISION_FRAME_SKIP: int = Field(default=1, ge=0, le=20)
+    VISION_OUTPUT_FPS: float = Field(default=8.0, ge=1.0, le=30.0)
+    VISION_MAX_WIDTH: int = Field(default=960, ge=320, le=3840)
 
     @field_validator("SMTP_HOST", "SMTP_USERNAME", "SMTP_PASSWORD", "SMTP_FROM_EMAIL", mode="before")
     @classmethod

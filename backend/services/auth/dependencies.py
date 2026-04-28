@@ -20,6 +20,7 @@ def get_current_user(request: Request) -> dict:
         "user_id": user_id,
         "role": getattr(request.state, "user_role", None),
         "org_id": getattr(request.state, "org_id", None),
+        "request_id": getattr(request.state, "request_id", None),
     }
 
 

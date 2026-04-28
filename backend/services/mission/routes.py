@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.shared.database.postgres import get_postgres_session
@@ -151,12 +151,13 @@ async def api_update_mission_status(
 
 @router.post("/upload", dependencies=[Depends(RequireRole(Role.PILOT))])
 async def api_upload_mission(
+    request: Request,
     data: MissionUploadRequest,
     org_id: OrgId,
     db: AsyncSession = Depends(get_postgres_session),
 ):
     """Upload a mission to a vehicle via MQTT → edge agent → Pixhawk."""
-    return await upload_mission_to_vehicle(db, org_id, data)
+    return await upload_mission_to_vehicle(db, org_id, data, request_id=getattr(request.state, "request_id", None))
 
 
 @router.post(
@@ -165,13 +166,20 @@ async def api_upload_mission(
     dependencies=[Depends(RequireRole(Role.PILOT))],
 )
 async def api_download_mission(
+    request: Request,
     data: MissionDownloadRequest,
     org_id: OrgId,
     user: CurrentUser,
     db: AsyncSession = Depends(get_postgres_session),
 ):
     """Download current mission from a vehicle via MQTT → edge agent → Pixhawk."""
-    return await download_mission_from_vehicle(db, org_id, data, user=user)
+    return await download_mission_from_vehicle(
+        db,
+        org_id,
+        data,
+        user=user,
+        request_id=getattr(request.state, "request_id", None),
+    )
 
 
 @router.get("/{mission_id}/graph", response_model=MissionGraph)

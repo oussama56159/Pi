@@ -25,6 +25,7 @@ async def upload_mission_event_to_autopilot(
     event: MissionUploadEvent,
     publish_json: Callable[[str, dict], Awaitable[None]],
     request_timeout_s: float = 30.0,
+    max_retries: int = 3,
 ) -> None:
     """Upload the mission contained in a MissionUploadEvent to the connected autopilot.
 
@@ -94,137 +95,143 @@ async def upload_mission_event_to_autopilot(
     except Exception as exc:
         logger.info("MISSION_CLEAR_ALL send failed (continuing): %s", exc)
 
-    # Send mission count.
-    try:
+    for attempt in range(1, max_retries + 1):
+        sent: set[int] = set()
         try:
-            master.mav.mission_count_send(target_system, target_component, count, 0)
-        except TypeError:
-            master.mav.mission_count_send(target_system, target_component, count)
-    except Exception as exc:
-        await publish_status(MissionStatus.FAILED, f"Failed to send MISSION_COUNT: {exc}")
-        return
+            try:
+                master.mav.mission_count_send(target_system, target_component, count, 0)
+            except TypeError:
+                master.mav.mission_count_send(target_system, target_component, count)
+        except Exception as exc:
+            await publish_status(MissionStatus.FAILED, f"Failed to send MISSION_COUNT: {exc}")
+            return
 
-    sent: set[int] = set()
+        try:
+            while len(sent) < count:
+                req = await reader.wait_for(
+                    ("MISSION_REQUEST_INT", "MISSION_REQUEST"),
+                    predicate=lambda d: (
+                        (d.get("seq") is not None)
+                        and (int(d.get("seq")) in wp_by_seq)
+                        and (int(d.get("seq")) not in sent)
+                    ),
+                    timeout_s=request_timeout_s,
+                )
 
-    try:
-        while len(sent) < count:
-            req = await reader.wait_for(
-                ("MISSION_REQUEST_INT", "MISSION_REQUEST"),
-                predicate=lambda d: (
-                    (d.get("seq") is not None)
-                    and (int(d.get("seq")) in wp_by_seq)
-                    and (int(d.get("seq")) not in sent)
-                ),
-                timeout_s=request_timeout_s,
-            )
+                seq = int(req.data.get("seq"))
+                wp = wp_by_seq[seq]
 
-            seq = int(req.data.get("seq"))
-            wp = wp_by_seq[seq]
+                mav_cmd = waypoint_command_to_mav_cmd(wp.command)
+                frame = int(getattr(wp, "frame", 3) or 3)
 
-            mav_cmd = waypoint_command_to_mav_cmd(wp.command)
-            frame = int(getattr(wp, "frame", 3) or 3)
+                current = 1 if seq == 0 else 0
+                autocontinue = 1
 
-            current = 1 if seq == 0 else 0
-            autocontinue = 1
-
-            if req.name == "MISSION_REQUEST_INT":
-                x = int(float(wp.lat) * 1e7)
-                y = int(float(wp.lng) * 1e7)
-                z = float(wp.alt)
-                try:
+                if req.name == "MISSION_REQUEST_INT":
+                    x = int(float(wp.lat) * 1e7)
+                    y = int(float(wp.lng) * 1e7)
+                    z = float(wp.alt)
                     try:
-                        master.mav.mission_item_int_send(
-                            target_system,
-                            target_component,
-                            seq,
-                            frame,
-                            mav_cmd,
-                            current,
-                            autocontinue,
-                            float(wp.param1),
-                            float(wp.param2),
-                            float(wp.param3),
-                            float(wp.param4),
-                            x,
-                            y,
-                            z,
-                            0,
-                        )
-                    except TypeError:
-                        master.mav.mission_item_int_send(
-                            target_system,
-                            target_component,
-                            seq,
-                            frame,
-                            mav_cmd,
-                            current,
-                            autocontinue,
-                            float(wp.param1),
-                            float(wp.param2),
-                            float(wp.param3),
-                            float(wp.param4),
-                            x,
-                            y,
-                            z,
-                        )
-                except Exception as exc:
-                    await publish_status(MissionStatus.FAILED, f"Failed to send MISSION_ITEM_INT seq={seq}: {exc}")
-                    return
-            else:
-                x = float(wp.lat)
-                y = float(wp.lng)
-                z = float(wp.alt)
-                try:
+                        try:
+                            master.mav.mission_item_int_send(
+                                target_system,
+                                target_component,
+                                seq,
+                                frame,
+                                mav_cmd,
+                                current,
+                                autocontinue,
+                                float(wp.param1),
+                                float(wp.param2),
+                                float(wp.param3),
+                                float(wp.param4),
+                                x,
+                                y,
+                                z,
+                                0,
+                            )
+                        except TypeError:
+                            master.mav.mission_item_int_send(
+                                target_system,
+                                target_component,
+                                seq,
+                                frame,
+                                mav_cmd,
+                                current,
+                                autocontinue,
+                                float(wp.param1),
+                                float(wp.param2),
+                                float(wp.param3),
+                                float(wp.param4),
+                                x,
+                                y,
+                                z,
+                            )
+                    except Exception as exc:
+                        await publish_status(MissionStatus.FAILED, f"Failed to send MISSION_ITEM_INT seq={seq}: {exc}")
+                        return
+                else:
+                    x = float(wp.lat)
+                    y = float(wp.lng)
+                    z = float(wp.alt)
                     try:
-                        master.mav.mission_item_send(
-                            target_system,
-                            target_component,
-                            seq,
-                            frame,
-                            mav_cmd,
-                            current,
-                            autocontinue,
-                            float(wp.param1),
-                            float(wp.param2),
-                            float(wp.param3),
-                            float(wp.param4),
-                            x,
-                            y,
-                            z,
-                            0,
-                        )
-                    except TypeError:
-                        master.mav.mission_item_send(
-                            target_system,
-                            target_component,
-                            seq,
-                            frame,
-                            mav_cmd,
-                            current,
-                            autocontinue,
-                            float(wp.param1),
-                            float(wp.param2),
-                            float(wp.param3),
-                            float(wp.param4),
-                            x,
-                            y,
-                            z,
-                        )
-                except Exception as exc:
-                    await publish_status(MissionStatus.FAILED, f"Failed to send MISSION_ITEM seq={seq}: {exc}")
-                    return
+                        try:
+                            master.mav.mission_item_send(
+                                target_system,
+                                target_component,
+                                seq,
+                                frame,
+                                mav_cmd,
+                                current,
+                                autocontinue,
+                                float(wp.param1),
+                                float(wp.param2),
+                                float(wp.param3),
+                                float(wp.param4),
+                                x,
+                                y,
+                                z,
+                                0,
+                            )
+                        except TypeError:
+                            master.mav.mission_item_send(
+                                target_system,
+                                target_component,
+                                seq,
+                                frame,
+                                mav_cmd,
+                                current,
+                                autocontinue,
+                                float(wp.param1),
+                                float(wp.param2),
+                                float(wp.param3),
+                                float(wp.param4),
+                                x,
+                                y,
+                                z,
+                            )
+                    except Exception as exc:
+                        await publish_status(MissionStatus.FAILED, f"Failed to send MISSION_ITEM seq={seq}: {exc}")
+                        return
 
-            sent.add(seq)
-            await publish_progress(len(sent), count, MissionStatus.UPLOADING)
+                sent.add(seq)
+                await publish_progress(len(sent), count, MissionStatus.UPLOADING)
 
-        ack = await reader.wait_for("MISSION_ACK", timeout_s=request_timeout_s)
-        ack_type = ack.data.get("type")
-        accepted = (ack_type is None) or int(ack_type) == 0
+            ack = await reader.wait_for("MISSION_ACK", timeout_s=request_timeout_s)
+            ack_type = ack.data.get("type")
+            accepted = (ack_type is None) or int(ack_type) == 0
 
-        if accepted:
-            await publish_status(MissionStatus.UPLOADED, "Mission upload accepted", progress=100.0)
-        else:
+            if accepted:
+                await publish_status(MissionStatus.UPLOADED, "Mission upload accepted", progress=100.0)
+                return
             await publish_status(MissionStatus.FAILED, f"Mission upload rejected (ACK type={ack_type})")
-
-    except asyncio.TimeoutError:
-        await publish_status(MissionStatus.FAILED, "Mission upload timed out waiting for autopilot")
+            return
+        except asyncio.TimeoutError:
+            if attempt >= max_retries:
+                await publish_status(MissionStatus.FAILED, "Mission upload timed out waiting for autopilot")
+                return
+            await publish_status(
+                MissionStatus.UPLOADING,
+                f"Upload timeout, retrying ({attempt}/{max_retries}) from partial state",
+            )
+            await asyncio.sleep(min(2.0 * attempt, 5.0))

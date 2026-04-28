@@ -15,3 +15,16 @@ Thumbs.db
 
 # Local scratch files
 appicon.png
+
+# VS Code
+.vscode/
+
+# Copilot / agent workspace artifacts
+.docker-agent/
+
+# Python packaging artifacts
+*.egg-info/
+**/*.egg-info/
+
+# PDFs are usually local documents (keep repo clean)
+*.pdf

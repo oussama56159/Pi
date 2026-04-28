@@ -361,7 +361,7 @@ async def login_user(db: AsyncSession, data: LoginRequest) -> LoginResponse:
     access_token, access_jti, expires_in = create_access_token(str(user.id), user.role, org_id)
     refresh_token, refresh_jti = create_refresh_token(str(user.id))
 
-    get_runtime_cache().set_session(
+    await get_runtime_cache().set_session(
         str(user.id),
         {
             "access_jti": access_jti,
@@ -408,7 +408,7 @@ async def refresh_tokens(db: AsyncSession, refresh_token: str) -> TokenRefreshRe
     # Blacklist old refresh token
     old_jti = payload.get("jti")
     if old_jti:
-        get_runtime_cache().blacklist_token(old_jti, 7 * 24 * 3600)
+        await get_runtime_cache().blacklist_token(old_jti, 7 * 24 * 3600)
 
     org_id = str(user.organization_id) if user.organization_id else None
     new_access, _, expires_in = create_access_token(str(user.id), user.role, org_id)
@@ -425,6 +425,6 @@ async def logout_user(user_id: str, jti: str | None) -> None:
     """Blacklist current token and clear session."""
     cache = get_runtime_cache()
     if jti:
-        cache.blacklist_token(jti, 24 * 3600)
-    cache.clear_session(user_id)
+        await cache.blacklist_token(jti, 24 * 3600)
+    await cache.clear_session(user_id)
 

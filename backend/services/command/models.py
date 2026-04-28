@@ -4,7 +4,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSON, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,11 +14,16 @@ from backend.shared.schemas.command import CommandStatus, CommandType
 
 class CommandRecord(PostgresBase):
     __tablename__ = "commands"
+    __table_args__ = (
+        UniqueConstraint("organization_id", "idempotency_key", name="uq_command_org_idempotency"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     vehicle_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     organization_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False, index=True)
     command: Mapped[CommandType] = mapped_column(Enum(CommandType, name="command_type"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
+    request_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     status: Mapped[CommandStatus] = mapped_column(
         Enum(CommandStatus, name="command_status"), nullable=False, default=CommandStatus.PENDING
     )

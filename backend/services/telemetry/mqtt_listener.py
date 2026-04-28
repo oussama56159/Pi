@@ -16,6 +16,7 @@ async def start_telemetry_listener() -> None:
     Expected topics:
       - aerocommand/{org_id}/telemetry/{vehicle_id}/raw
       - aerocommand/{org_id}/telemetry/{vehicle_id}/heartbeat
+      - aerocommand/{org_id}/status/{vehicle_id}/online
 
     Note: This function registers handlers and returns; the shared MQTT runtime
     keeps the connection alive in the background.
@@ -28,21 +29,20 @@ async def start_telemetry_listener() -> None:
         if len(parts) < 5:
             return
 
-        # aerocommand/{org_id}/telemetry/{vehicle_id}/{sub}
         domain = parts[2]
-        if domain != "telemetry":
-            return
-
         vehicle_id = parts[3]
         sub = parts[4]
 
         try:
-            if sub == "raw":
+            if domain == "telemetry" and sub == "raw":
                 await process_telemetry(vehicle_id, payload)
-            elif sub == "heartbeat":
+            elif domain == "telemetry" and sub == "heartbeat":
                 await process_heartbeat(vehicle_id, payload)
+            elif domain == "status" and sub == "online":
+                await process_heartbeat(vehicle_id, {"connected": bool(payload.get("online", True))})
         except Exception as exc:
             logger.error("Telemetry MQTT handler failed for %s: %s", topic, exc)
 
     await mqtt.subscribe("aerocommand/+/telemetry/+/raw", _handle)
     await mqtt.subscribe("aerocommand/+/telemetry/+/heartbeat", _handle)
+    await mqtt.subscribe("aerocommand/+/status/+/online", _handle)

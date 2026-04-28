@@ -14,9 +14,13 @@ FROM base AS deps
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential libpq-dev \
+        libglib2.0-0 libsm6 libxext6 libxrender1 libxcb1 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
+# Force CPU-only PyTorch wheels to avoid downloading CUDA/NVIDIA packages.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+    torch torchvision
 RUN pip install --no-cache-dir \
     fastapi[standard] \
     uvicorn[standard] \
@@ -29,15 +33,21 @@ RUN pip install --no-cache-dir \
     passlib[bcrypt] \
     "bcrypt<4.0" \
     aiomqtt \
+    redis[hiredis] \
+    prometheus-client \
     httpx \
     python-multipart \
-    orjson
+    orjson \
+    numpy \
+    opencv-python-headless \
+    ultralytics
 
 # ─── Stage 2: Production ───
 FROM base AS production
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 curl \
+        libglib2.0-0 libsm6 libxext6 libxrender1 libxcb1 libgl1 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user

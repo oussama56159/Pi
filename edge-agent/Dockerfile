@@ -14,6 +14,6 @@ COPY shared_python /app/shared_python
 COPY edge-agent /app/edge-agent
 
 RUN pip install --no-cache-dir -e /app/shared_python ; \
-    pip install --no-cache-dir -e /app/edge-agent
+    pip install --no-cache-dir -e "/app/edge-agent[camera]"
 
 CMD ["aerocommand-edge-agent"]

@@ -1,3 +1,7 @@
+param(
+  [switch]$Clean
+)
+
 $ErrorActionPreference = 'Stop'
 
 Write-Host "Starting AeroCommand dev stack..." -ForegroundColor Cyan
@@ -16,6 +20,12 @@ Pop-Location
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repoRoot
+
+if ($Clean) {
+  Write-Host "Clean rebuild requested: removing existing containers + forcing api-server rebuild..." -ForegroundColor Yellow
+  docker compose down
+  docker compose build --no-cache api-server
+}
 
 docker compose up -d --build
 

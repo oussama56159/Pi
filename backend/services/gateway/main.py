@@ -14,6 +14,7 @@ from __future__ import annotations
 import time
 from contextlib import asynccontextmanager
 import asyncio
+import uuid
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -90,9 +91,12 @@ def create_app() -> FastAPI:
     # ── Request timing ──
     @app.middleware("http")
     async def add_timing_header(request: Request, call_next):
+        request_id = request.headers.get("X-Request-Id") or str(uuid.uuid4())
+        request.state.request_id = request_id
         start = time.perf_counter()
         response = await call_next(request)
         response.headers["X-Process-Time"] = f"{(time.perf_counter() - start) * 1000:.2f}ms"
+        response.headers["X-Request-Id"] = request_id
         return response
 
     # ── Global exception handler ──

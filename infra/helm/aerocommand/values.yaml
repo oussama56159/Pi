@@ -39,9 +39,23 @@ secrets:
   create: true
   POSTGRES_USER: aerocommand
   POSTGRES_PASSWORD: CHANGE_ME_IN_PRODUCTION
+  REDIS_PASSWORD: CHANGE_ME_IN_PRODUCTION
   JWT_SECRET_KEY: CHANGE_ME_IN_PRODUCTION
   MQTT_USERNAME: aerocommand
   MQTT_PASSWORD: CHANGE_ME_IN_PRODUCTION
+
+# ── Redis (Bitnami Sub-chart) ──
+redis:
+  enabled: true
+  architecture: standalone
+  auth:
+    enabled: true
+    existingSecret: aerocommand-secrets
+    existingSecretPasswordKey: REDIS_PASSWORD
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
 
 # ── Dashboard ──
 dashboard:

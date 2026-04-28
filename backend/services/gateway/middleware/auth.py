@@ -57,12 +57,14 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         if request.headers.get("upgrade", "").lower() == "websocket":
             return await call_next(request)
 
-        # Extract Bearer token
+        # Extract Bearer token (or query token for browser-embedded streams like MJPEG <img>)
         auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            return JSONResponse(status_code=401, content={"detail": "Missing authentication token"})
-
-        token = auth_header[7:]
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        else:
+            token = request.query_params.get("access_token")
+            if not token:
+                return JSONResponse(status_code=401, content={"detail": "Missing authentication token"})
         settings = get_base_settings()
 
         try:
@@ -79,7 +81,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
         # Check token blacklist (logout / revocation)
         jti = payload.get("jti")
         if jti:
-            if get_runtime_cache().is_token_blacklisted(jti):
+            if await get_runtime_cache().is_token_blacklisted(jti):
                 return JSONResponse(status_code=401, content={"detail": "Token revoked"})
 
         # Inject user context

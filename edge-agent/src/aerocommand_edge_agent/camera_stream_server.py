@@ -31,6 +31,8 @@ class CameraStreamConfig:
     frame_height: int
     fps: float
     jpeg_quality: int
+    drone_ip: str | None = None
+    public_url: str | None = None
     token: str | None = None
 
 
@@ -63,7 +65,8 @@ class _FrameBuffer:
                         dev,
                     )
                     return False
-            cap = cv2.VideoCapture(int(self._cfg.camera_index))
+            backend = cv2.CAP_V4L2 if hasattr(cv2, "CAP_V4L2") and sys.platform.startswith("linux") else None
+            cap = cv2.VideoCapture(int(self._cfg.camera_index), backend) if backend is not None else cv2.VideoCapture(int(self._cfg.camera_index))
 
         if not cap.isOpened():
             try:
@@ -74,10 +77,18 @@ class _FrameBuffer:
             return False
 
         try:
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, float(self._cfg.frame_width))
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, float(self._cfg.frame_height))
+            cap.set(cv2.CAP_PROP_FPS, float(self._cfg.fps))
         except Exception:
             pass
+
+        for _ in range(5):
+            try:
+                cap.read()
+            except Exception:
+                break
 
         self._capture = cap
         self._thread = threading.Thread(target=self._run, name="aerocommand-mjpeg", daemon=True)
@@ -267,7 +278,7 @@ def start_camera_stream_server(config: CameraStreamConfig) -> object | None:
     if not config.enabled:
         return None
 
-    path = (config.path or "/mjpeg").strip() or "/mjpeg"
+    path = (config.path or "/video").strip() or "/video"
     if not path.startswith("/"):
         path = "/" + path
 
@@ -286,5 +297,25 @@ def start_camera_stream_server(config: CameraStreamConfig) -> object | None:
     thread = threading.Thread(target=server.serve_forever, name="aerocommand-mjpeg-http", daemon=True)
     thread.start()
 
-    logger.info("Camera MJPEG stream started on http://%s:%s%s", config.host, config.port, path)
+    public_url = resolve_camera_stream_url(config)
+    if public_url:
+        logger.info("Camera MJPEG stream started at %s", public_url)
+    else:
+        logger.info("Camera MJPEG stream started on http://%s:%s%s", config.host, config.port, path)
     return server
+
+
+def resolve_camera_stream_url(config: CameraStreamConfig) -> str | None:
+    public_url = (config.public_url or "").strip()
+    if public_url:
+        return public_url.rstrip("/")
+
+    drone_ip = (config.drone_ip or "").strip()
+    if not drone_ip:
+        return None
+
+    path = (config.path or "/video").strip() or "/video"
+    if not path.startswith("/"):
+        path = "/" + path
+
+    return f"http://{drone_ip}:{int(config.port)}{path}"

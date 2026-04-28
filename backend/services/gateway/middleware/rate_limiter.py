@@ -27,7 +27,7 @@ class RateLimiterMiddleware(BaseHTTPMiddleware):
         if not client_id:
             client_id = request.client.host if request.client else "unknown"
 
-        if not get_runtime_cache().allow_rate_limit(client_id, RATE_LIMIT_PER_MINUTE, 60):
+        if not await get_runtime_cache().allow_rate_limit(client_id, RATE_LIMIT_PER_MINUTE, 60):
             return JSONResponse(
                 status_code=429,
                 content={"detail": "Rate limit exceeded. Try again later."},

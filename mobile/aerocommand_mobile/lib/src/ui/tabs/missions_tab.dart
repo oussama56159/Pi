@@ -36,6 +36,11 @@ class _MissionsTabState extends State<MissionsTab> {
 
   Timer? _demoRefreshTimer;
 
+  String _idempotencyKey(String vehicleId, String missionId) {
+    final ts = DateTime.now().toUtc().microsecondsSinceEpoch;
+    return 'mobile-$vehicleId-$missionId-$ts';
+  }
+
   @override
   void initState() {
     super.initState();
@@ -206,9 +211,10 @@ class _MissionsTabState extends State<MissionsTab> {
               'mission_id': mId,
             });
 
-            await api.postJson('/command', {
+            await api.postJson('/commands', {
               'vehicle_id': vId,
               'command': 'mission_start',
+              'idempotency_key': _idempotencyKey(vId, mId),
               'params': {'mission_id': mId},
               'priority': 0,
               'timeout_seconds': 30,

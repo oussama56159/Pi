@@ -5,17 +5,22 @@ Validates commands, publishes to MQTT, tracks acknowledgments.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
+import orjson
+import time
 from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from backend.shared.mqtt_topics import MQTTTopics
 from backend.shared.mqtt_runtime import get_mqtt
 from backend.shared.runtime_cache import get_runtime_cache
+from backend.shared.database.postgres import get_direct_postgres_session
 from backend.shared.schemas.command import (
     CommandAck,
     CommandRequest,
@@ -24,6 +29,10 @@ from backend.shared.schemas.command import (
     CommandType,
     MAVLinkCommand,
 )
+from backend.shared.schemas.auth import Role
+from backend.shared.schemas.telemetry import TelemetrySnapshot
+from backend.services.alert.models import GeofenceZoneRecord
+from backend.shared.metrics import COMMAND_DISPATCH_TOTAL, MQTT_PUBLISH_LATENCY_SECONDS
 
 from .models import CommandRecord
 
@@ -37,7 +46,7 @@ CRITICAL_COMMANDS = {CommandType.EMERGENCY_STOP, CommandType.REBOOT}
 
 
 async def dispatch_command(
-    db: AsyncSession, org_id: UUID, user_id: UUID, data: CommandRequest,
+    db: AsyncSession, org_id: UUID, user_id: UUID, data: CommandRequest, *, user: dict | None = None
 ) -> CommandResponse:
     """
     Validate and dispatch a command to a vehicle.
@@ -48,13 +57,32 @@ async def dispatch_command(
     5. Return command record
     """
     # Pre-flight validation
-    await _validate_command(data)
+    if not data.idempotency_key:
+        raise HTTPException(status_code=400, detail="idempotency_key is required")
+    await _validate_command(db, org_id, data, user=user)
 
+    fingerprint = _command_fingerprint(data)
+    existing = (
+        await db.execute(
+            select(CommandRecord).where(
+                CommandRecord.organization_id == org_id,
+                CommandRecord.idempotency_key == data.idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        if existing.request_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="Idempotency key already used with different command payload")
+        return CommandResponse.model_validate(existing)
+
+    request_id = user.get("request_id") if user else None
     # Persist command record
     record = CommandRecord(
         vehicle_id=data.vehicle_id,
         organization_id=org_id,
         command=data.command,
+        idempotency_key=data.idempotency_key,
+        request_fingerprint=fingerprint,
         status=CommandStatus.PENDING,
         params=data.params,
         priority=data.priority,
@@ -62,9 +90,27 @@ async def dispatch_command(
         issued_by=user_id,
     )
     db.add(record)
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        await db.rollback()
+        existing = (
+            await db.execute(
+                select(CommandRecord).where(
+                    CommandRecord.organization_id == org_id,
+                    CommandRecord.idempotency_key == data.idempotency_key,
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        if existing.request_fingerprint != fingerprint:
+            raise HTTPException(status_code=409, detail="Idempotency key already used with different command payload")
+        return CommandResponse.model_validate(existing)
     await db.refresh(record)
     issued_at = record.issued_at or datetime.now(timezone.utc)
+    # Make the command row durable before any side effect is emitted.
+    await db.commit()
 
     # Build MAVLink command payload
     mavlink_cmd = _build_mavlink_command(data)
@@ -72,6 +118,7 @@ async def dispatch_command(
     # Publish to MQTT
     mqtt_payload = {
         "command_id": str(record.id),
+        "correlation_id": request_id or str(record.id),
         "command": data.command.value,
         "mavlink": mavlink_cmd.model_dump() if mavlink_cmd else None,
         "params": data.params,
@@ -86,12 +133,23 @@ async def dispatch_command(
     # Publish to MQTT for edge agent
     try:
         mqtt = await get_mqtt()
+        start = time.perf_counter()
         await mqtt.publish(topic, mqtt_payload)
+        MQTT_PUBLISH_LATENCY_SECONDS.labels("command").observe(time.perf_counter() - start)
     except Exception as exc:
+        COMMAND_DISPATCH_TOTAL.labels(data.command.value, "publish_error").inc()
         logger.error("Failed to publish command %s to MQTT: %s", record.id, exc)
+        # Persist failure so operators see real command outcome.
+        record.status = CommandStatus.FAILED
+        record.error_message = "MQTT publish failed"
+        record.completed_at = datetime.now(timezone.utc)
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
         raise HTTPException(status_code=503, detail="Command dispatch unavailable (MQTT offline)")
 
-    get_runtime_cache().set_command_state(
+    await get_runtime_cache().set_command_state(
         str(record.id),
         {
             "status": CommandStatus.SENT.value,
@@ -104,27 +162,70 @@ async def dispatch_command(
 
     # Update status to SENT
     record.status = CommandStatus.SENT
-    await db.flush()
+    await db.commit()
 
     # Start timeout watcher
     asyncio.create_task(_command_timeout_watcher(str(record.id), data.timeout_seconds))
+    COMMAND_DISPATCH_TOTAL.labels(data.command.value, "sent").inc()
 
     return CommandResponse.model_validate(record)
 
 
 async def handle_command_ack(ack: CommandAck) -> None:
     """Process command acknowledgment from edge agent (via MQTT)."""
-    get_runtime_cache().update_command_state(
+    status = ack.status
+    now = ack.timestamp
+    result_payload = {"result_code": ack.result_code, "message": ack.message or ""}
+    terminal_statuses = {
+        CommandStatus.REJECTED,
+        CommandStatus.FAILED,
+        CommandStatus.COMPLETED,
+        CommandStatus.TIMEOUT,
+    }
+    acked_statuses = terminal_statuses | {
+        CommandStatus.ACCEPTED,
+        CommandStatus.ACKNOWLEDGED,
+        CommandStatus.IN_PROGRESS,
+    }
+
+    try:
+        command_id = UUID(ack.command_id)
+    except ValueError:
+        logger.error("Invalid command_id in ACK payload: %s", ack.command_id)
+        return
+
+    try:
+        session = await get_direct_postgres_session()
+        async with session:
+            row = (
+                await session.execute(select(CommandRecord).where(CommandRecord.id == command_id))
+            ).scalar_one_or_none()
+            if row is not None:
+                row.status = status
+                row.result = result_payload
+                if status in acked_statuses and row.acknowledged_at is None:
+                    row.acknowledged_at = now
+                if status in terminal_statuses:
+                    row.completed_at = now
+                    if status in {CommandStatus.REJECTED, CommandStatus.FAILED, CommandStatus.TIMEOUT}:
+                        row.error_message = ack.message or f"Command {status.value}"
+                    else:
+                        row.error_message = None
+                await session.commit()
+    except Exception as exc:
+        logger.error("Failed persisting command ACK %s: %s", ack.command_id, exc)
+
+    await get_runtime_cache().update_command_state(
         ack.command_id,
         {
-            "status": ack.status.value,
+            "status": status.value,
             "result_code": str(ack.result_code),
             "message": ack.message or "",
-            "ack_at": ack.timestamp.isoformat(),
+            "ack_at": now.isoformat(),
         },
     )
 
-    logger.info(f"Command {ack.command_id} acknowledged: {ack.status.value}")
+    logger.info(f"Command {ack.command_id} acknowledged: {status.value}")
 
 
 async def get_command(db: AsyncSession, org_id: UUID, command_id: UUID) -> CommandResponse:
@@ -150,12 +251,29 @@ async def list_commands(
 
 # ── Internal helpers ──
 
-async def _validate_command(data: CommandRequest) -> None:
+async def _validate_command(db: AsyncSession, org_id: UUID, data: CommandRequest, *, user: dict | None = None) -> None:
     """Validate command preconditions."""
     # Check vehicle is online
-    status = get_runtime_cache().get_vehicle_status(str(data.vehicle_id))
+    status = await get_runtime_cache().get_vehicle_status(str(data.vehicle_id))
     if status is not None and status != "online":
         raise HTTPException(status_code=409, detail="Vehicle is offline")
+
+    if data.command in CRITICAL_COMMANDS and user and user.get("role") not in {Role.ADMIN.value, Role.SUPER_ADMIN.value}:
+        raise HTTPException(status_code=403, detail="Critical command requires admin role")
+
+    telemetry_raw = await get_runtime_cache().get_telemetry_snapshot(str(data.vehicle_id))
+    telemetry = _parse_telemetry_snapshot(telemetry_raw)
+    if telemetry is not None and data.command in {CommandType.TAKEOFF, CommandType.MISSION_START, CommandType.GOTO}:
+        if telemetry.battery is not None and float(telemetry.battery) < 20.0:
+            raise HTTPException(status_code=409, detail="Preflight failed: battery below 20%")
+        if telemetry.gps_fix is not None and int(telemetry.gps_fix) < 3:
+            raise HTTPException(status_code=409, detail="Preflight failed: GPS fix is insufficient")
+
+    if data.command == CommandType.GOTO:
+        lat = float(data.params.get("lat", 0))
+        lng = float(data.params.get("lng", 0))
+        alt = float(data.params.get("alt", 0))
+        await _enforce_geofence(db, org_id, lat=lat, lng=lng, alt=alt)
 
 
 def _build_mavlink_command(data: CommandRequest) -> MAVLinkCommand | None:
@@ -182,6 +300,15 @@ def _build_mavlink_command(data: CommandRequest) -> MAVLinkCommand | None:
     elif data.command == CommandType.EMERGENCY_STOP:
         cmd.param1 = 0  # disarm
         cmd.param2 = 21196  # magic number for force disarm
+    elif data.command == CommandType.MISSION_START:
+        # MAV_CMD_MISSION_START supports optional first/last item as param1/param2.
+        cmd.param1 = float(data.params.get("first_item", 0))
+        cmd.param2 = float(data.params.get("last_item", 0))
+    elif data.command == CommandType.MISSION_PAUSE:
+        # MAV_CMD_DO_PAUSE_CONTINUE: 0 pause, 1 continue.
+        cmd.param1 = 0
+    elif data.command == CommandType.MISSION_RESUME:
+        cmd.param1 = 1
 
     return cmd
 
@@ -190,8 +317,69 @@ async def _command_timeout_watcher(command_id: str, timeout: int) -> None:
     """Background task to mark timed-out commands."""
     await asyncio.sleep(timeout)
     cache = get_runtime_cache()
-    state = cache.get_command_state(command_id)
+    state = await cache.get_command_state(command_id)
     if state and state.get("status") in (CommandStatus.PENDING.value, CommandStatus.SENT.value):
-        cache.update_command_state(command_id, {"status": CommandStatus.TIMEOUT.value})
+        await cache.update_command_state(command_id, {"status": CommandStatus.TIMEOUT.value})
         logger.warning(f"Command {command_id} timed out after {timeout}s")
+
+
+def _command_fingerprint(data: CommandRequest) -> str:
+    payload = {
+        "vehicle_id": str(data.vehicle_id),
+        "command": data.command.value,
+        "params": data.params,
+        "priority": data.priority,
+        "timeout_seconds": data.timeout_seconds,
+    }
+    raw = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _parse_telemetry_snapshot(raw: dict | None) -> TelemetrySnapshot | None:
+    if raw is None:
+        return None
+    try:
+        return TelemetrySnapshot.model_validate(raw)
+    except Exception:
+        return None
+
+
+def _point_in_polygon(lat: float, lng: float, polygon: list[list[float]]) -> bool:
+    inside = False
+    j = len(polygon) - 1
+    for i in range(len(polygon)):
+        yi, xi = polygon[i][0], polygon[i][1]
+        yj, xj = polygon[j][0], polygon[j][1]
+        intersects = ((xi > lng) != (xj > lng)) and (
+            lat < (yj - yi) * (lng - xi) / ((xj - xi) or 1e-9) + yi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+    return inside
+
+
+async def _enforce_geofence(db: AsyncSession, org_id: UUID, *, lat: float, lng: float, alt: float) -> None:
+    zones = (
+        await db.execute(
+            select(GeofenceZoneRecord).where(
+                GeofenceZoneRecord.organization_id == org_id,
+                GeofenceZoneRecord.enabled.is_(True),
+            )
+        )
+    ).scalars().all()
+    blocking = [z for z in zones if str(z.action).lower() in {"block", "block_start"}]
+    if not blocking:
+        return
+    for zone in blocking:
+        coords = zone.coordinates or []
+        if zone.type == "polygon" and isinstance(coords, list) and len(coords) >= 3:
+            if not _point_in_polygon(lat, lng, coords):
+                continue
+            if zone.min_altitude is not None and alt < zone.min_altitude:
+                raise HTTPException(status_code=409, detail=f"Geofence violation: altitude below {zone.min_altitude}")
+            if zone.max_altitude is not None and alt > zone.max_altitude:
+                raise HTTPException(status_code=409, detail=f"Geofence violation: altitude above {zone.max_altitude}")
+            return
+    raise HTTPException(status_code=409, detail="Geofence violation: target point outside allowed zones")
 

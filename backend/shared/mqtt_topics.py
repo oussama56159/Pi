@@ -117,6 +117,14 @@ class MQTTTopics:
     def system_health() -> str:
         return "aerocommand/$SYS/health"
 
+    @staticmethod
+    def system_reconcile_request(org_id: str, vehicle_id: str) -> str:
+        return f"aerocommand/{org_id}/system/{vehicle_id}/reconcile/request"
+
+    @staticmethod
+    def system_reconcile_response(org_id: str, vehicle_id: str) -> str:
+        return f"aerocommand/{org_id}/system/{vehicle_id}/reconcile/response"
+
     # ── Wildcard subscriptions ──
     @staticmethod
     def all_telemetry(org_id: str) -> str:

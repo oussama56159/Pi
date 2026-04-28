@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import ClassVar
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -52,6 +53,7 @@ class CommandRequest(BaseModel):
     """Command from dashboard → API → MQTT → edge agent."""
     vehicle_id: UUID
     command: CommandType
+    idempotency_key: str | None = Field(default=None, min_length=8, max_length=128)
     params: dict = Field(default_factory=dict)
     priority: int = Field(default=0, ge=0, le=10, description="0=normal, 10=critical")
     timeout_seconds: int = Field(default=30, ge=5, le=300)
@@ -61,6 +63,7 @@ class CommandResponse(BaseModel):
     id: UUID
     vehicle_id: UUID
     command: CommandType
+    idempotency_key: str
     status: CommandStatus
     params: dict
     issued_by: UUID  # user_id
@@ -104,7 +107,7 @@ class MAVLinkCommand(BaseModel):
     confirmation: int = 0
 
     # Mapping from CommandType to MAV_CMD
-    COMMAND_MAP: dict[str, int] = {
+    COMMAND_MAP: ClassVar[dict[str, int]] = {
         "arm": 400,           # MAV_CMD_COMPONENT_ARM_DISARM
         "disarm": 400,
         "takeoff": 22,        # MAV_CMD_NAV_TAKEOFF
@@ -115,6 +118,9 @@ class MAVLinkCommand(BaseModel):
         "set_mode": 176,      # MAV_CMD_DO_SET_MODE
         "reboot": 246,        # MAV_CMD_PREFLIGHT_REBOOT_SHUTDOWN
         "goto": 192,          # MAV_CMD_DO_REPOSITION
+        "mission_start": 300,   # MAV_CMD_MISSION_START
+        "mission_pause": 193,   # MAV_CMD_DO_PAUSE_CONTINUE (param1=0)
+        "mission_resume": 193,  # MAV_CMD_DO_PAUSE_CONTINUE (param1=1)
     }
 
     model_config = {"json_schema_extra": {"examples": [{"command_id": 400, "param1": 1, "param7": 0}]}}

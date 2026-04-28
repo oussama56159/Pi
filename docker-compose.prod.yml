@@ -25,6 +25,22 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: aero-redis
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    deploy:
+      resources:
+        limits: { cpus: "1", memory: 512M }
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   emqx:
     image: emqx/emqx:5.5
     container_name: aero-emqx
@@ -61,6 +77,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
       MQTT_BROKER_HOST: emqx
       JWT_SECRET_KEY: ${JWT_SECRET_KEY}
       CORS_ORIGINS: ${CORS_ORIGINS}
@@ -85,6 +104,7 @@ services:
       - "8000:8000"
     depends_on:
       postgres: { condition: service_healthy }
+      redis:    { condition: service_healthy }
       emqx:     { condition: service_healthy }
     deploy:
       replicas: 2
@@ -110,6 +130,7 @@ services:
 
 volumes:
   pg_data:
+  redis_data:
   emqx_data:
 
 networks:

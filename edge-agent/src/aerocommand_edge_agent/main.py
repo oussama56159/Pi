@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -11,12 +12,15 @@ from pymavlink import mavutil
 from backend.shared.schemas.mission import MissionDownloadRequestEvent, MissionUploadEvent
 from backend.shared.schemas.command import CommandAck, CommandStatus, MAVLinkCommand
 
+from .camera_stream_server import CameraStreamConfig, resolve_camera_stream_url, start_camera_stream_server
 from .config import EdgeAgentSettings, get_settings
 from .mavlink_reader import MavlinkReader
 from .mission_downloader import download_mission_from_autopilot
 from .mission_uploader import upload_mission_event_to_autopilot
 from .mqtt_bridge import MqttBridge
 from .telemetry_state import TelemetryState
+
+logger = logging.getLogger(__name__)
 
 
 def _deg(rad: float) -> float:
@@ -33,6 +37,23 @@ def _command_status_from_mav_result(result: int) -> CommandStatus:
     if result in (1, 2, 3, 6):
         return CommandStatus.REJECTED
     return CommandStatus.FAILED
+
+
+def _edge_preflight_ok(cmd: MAVLinkCommand, telemetry_state: TelemetryState, settings: EdgeAgentSettings) -> tuple[bool, str]:
+    # Gate autonomous/kinematic commands with local safety checks.
+    # MAV_CMD: TAKEOFF=22, MISSION_START=300, DO_REPOSITION=192
+    if int(cmd.command_id) not in {22, 300, 192}:
+        return True, ""
+
+    battery_remaining = float(getattr(telemetry_state.battery, "remaining", 0.0) or 0.0)
+    if battery_remaining < float(settings.MIN_BATTERY_PERCENT_FOR_AUTO):
+        return False, f"Preflight failed on edge: battery {battery_remaining:.1f}% below minimum"
+
+    gps_fix = int(getattr(telemetry_state.gps, "fix_type", 0) or 0)
+    if gps_fix < int(settings.MIN_GPS_FIX_FOR_AUTO):
+        return False, f"Preflight failed on edge: GPS fix {gps_fix} below minimum"
+
+    return True, ""
 
 
 async def _mavlink_loop(reader: MavlinkReader, state: TelemetryState, settings: EdgeAgentSettings) -> None:
@@ -270,6 +291,26 @@ async def _gcs_heartbeat_loop(reader: MavlinkReader, hz: float) -> None:
 async def _run() -> None:
     settings = get_settings()
 
+    camera_stream_config = CameraStreamConfig(
+        enabled=settings.CAMERA_STREAM_ENABLED,
+        host=settings.CAMERA_STREAM_HOST,
+        port=settings.CAMERA_STREAM_PORT,
+        path=settings.CAMERA_STREAM_PATH,
+        camera_index=settings.CAMERA_STREAM_CAMERA_INDEX,
+        camera_url=None,
+        frame_width=settings.CAMERA_STREAM_FRAME_WIDTH,
+        frame_height=settings.CAMERA_STREAM_FRAME_HEIGHT,
+        fps=settings.CAMERA_STREAM_FPS,
+        jpeg_quality=settings.CAMERA_STREAM_JPEG_QUALITY,
+        drone_ip=settings.DRONE_IP,
+        public_url=settings.CAMERA_STREAM_PUBLIC_URL,
+        token=settings.CAMERA_STREAM_TOKEN,
+    )
+    camera_stream_server = start_camera_stream_server(camera_stream_config)
+    camera_stream_url = resolve_camera_stream_url(camera_stream_config)
+    if camera_stream_server is not None and camera_stream_url:
+        logger.info("Camera stream advertised as %s", camera_stream_url)
+
     reader = MavlinkReader(settings.MAVLINK_CONNECTION, settings.MAVLINK_BAUD, settings.MAVLINK_SOURCE_SYSTEM)
     reader.connect()
 
@@ -295,6 +336,7 @@ async def _run() -> None:
         client_id=settings.MQTT_CLIENT_ID,
         keepalive=settings.MQTT_KEEPALIVE,
         qos=settings.MQTT_QOS,
+        camera_stream_url=camera_stream_url,
     )
 
     telemetry_interval_s = 1.0 / settings.TELEMETRY_HZ
@@ -352,6 +394,20 @@ async def _run() -> None:
             return
 
         cmd = MAVLinkCommand.model_validate(mavlink_payload)
+        ok_to_send, reason = _edge_preflight_ok(cmd, telemetry_state, settings)
+        if not ok_to_send:
+            await publish_json(
+                bridge.command_ack_topic,
+                CommandAck(
+                    command_id=command_id,
+                    vehicle_id=settings.VEHICLE_ID,
+                    status=CommandStatus.REJECTED,
+                    result_code=4,
+                    message=reason,
+                    timestamp=datetime.now(tz=timezone.utc),
+                ).model_dump(mode="json"),
+            )
+            return
 
         # Prefer the autopilot IDs learned from heartbeat.
         target_system = int(getattr(reader.master, "target_system", 0) or 0) or int(cmd.target_system or 1)

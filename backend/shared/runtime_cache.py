@@ -1,147 +1,158 @@
-"""In-process runtime cache for non-authoritative state.
-
-The cache is intentionally ephemeral and must not be treated as a source of truth.
-"""
+"""Redis-backed runtime cache for distributed safety-critical state."""
 from __future__ import annotations
 
-from collections import defaultdict, deque
-from dataclasses import dataclass
-from threading import RLock
-import time
 import uuid
 from typing import Any
 
+import orjson
 
-@dataclass
-class _CacheEntry:
-    value: Any
-    expires_at: float | None = None
+from backend.shared.database.redis import get_redis
 
 
-class InMemoryRuntimeCache:
+def _orjson_loads_redis_value(value: Any) -> Any:
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return orjson.loads(value)
+    if isinstance(value, str):
+        return orjson.loads(value.encode("utf-8"))
+    return orjson.loads(str(value).encode("utf-8"))
+
+class RedisRuntimeCache:
     def __init__(self) -> None:
-        self._lock = RLock()
-        self._sessions: dict[str, _CacheEntry] = {}
-        self._token_blacklist: dict[str, _CacheEntry] = {}
-        self._telemetry_snapshots: dict[str, _CacheEntry] = {}
-        self._vehicle_status: dict[str, _CacheEntry] = {}
-        self._heartbeats: dict[str, _CacheEntry] = {}
-        self._command_state: dict[str, _CacheEntry] = {}
-        self._rate_limits: dict[str, deque[float]] = defaultdict(deque)
-        self._audit_events: deque[dict[str, Any]] = deque(maxlen=10_000)
+        self._redis = get_redis()
 
-    def _now(self) -> float:
-        return time.monotonic()
+    @staticmethod
+    def _key_session(user_id: str) -> str:
+        return f"aero:session:{user_id}"
 
-    def _expiry(self, ttl_seconds: int | float | None) -> float | None:
-        if ttl_seconds is None:
-            return None
-        return self._now() + float(ttl_seconds)
+    @staticmethod
+    def _key_blacklist(jti: str) -> str:
+        return f"aero:token:blacklist:{jti}"
 
-    def _purge_expired(self, store: dict[str, _CacheEntry]) -> None:
-        now = self._now()
-        expired = [key for key, entry in store.items() if entry.expires_at is not None and entry.expires_at <= now]
-        for key in expired:
-            store.pop(key, None)
+    @staticmethod
+    def _key_telemetry(vehicle_id: str) -> str:
+        return f"aero:telemetry:latest:{vehicle_id}"
 
-    def set_session(self, user_id: str, mapping: dict[str, Any], ttl_seconds: int | float | None = None) -> None:
-        with self._lock:
-            self._sessions[user_id] = _CacheEntry(dict(mapping), self._expiry(ttl_seconds))
+    @staticmethod
+    def _key_vehicle_status(vehicle_id: str) -> str:
+        return f"aero:vehicle:status:{vehicle_id}"
 
-    def clear_session(self, user_id: str) -> None:
-        with self._lock:
-            self._sessions.pop(user_id, None)
+    @staticmethod
+    def _key_heartbeat(vehicle_id: str) -> str:
+        return f"aero:vehicle:heartbeat:{vehicle_id}"
 
-    def blacklist_token(self, jti: str, ttl_seconds: int | float | None = None) -> None:
-        with self._lock:
-            self._token_blacklist[jti] = _CacheEntry(True, self._expiry(ttl_seconds))
+    @staticmethod
+    def _key_rate_limit(client_id: str) -> str:
+        return f"aero:rate_limit:{client_id}"
 
-    def is_token_blacklisted(self, jti: str) -> bool:
-        with self._lock:
-            self._purge_expired(self._token_blacklist)
-            return jti in self._token_blacklist
+    @staticmethod
+    def _key_command_state(command_id: str) -> str:
+        return f"aero:command:state:{command_id}"
 
-    def store_telemetry_snapshot(
+    async def set_session(self, user_id: str, mapping: dict[str, Any], ttl_seconds: int | float | None = None) -> None:
+        key = self._key_session(user_id)
+        await self._redis.hset(key, mapping={k: str(v) for k, v in mapping.items()})
+        if ttl_seconds is not None:
+            await self._redis.expire(key, int(ttl_seconds))
+
+    async def clear_session(self, user_id: str) -> None:
+        await self._redis.delete(self._key_session(user_id))
+
+    async def blacklist_token(self, jti: str, ttl_seconds: int | float | None = None) -> None:
+        key = self._key_blacklist(jti)
+        await self._redis.set(key, "1")
+        if ttl_seconds is not None:
+            await self._redis.expire(key, int(ttl_seconds))
+
+    async def is_token_blacklisted(self, jti: str) -> bool:
+        return bool(await self._redis.exists(self._key_blacklist(jti)))
+
+    async def store_telemetry_snapshot(
         self,
         vehicle_id: str,
         snapshot: dict[str, Any],
         ttl_seconds: int | float | None = None,
     ) -> None:
-        with self._lock:
-            self._telemetry_snapshots[vehicle_id] = _CacheEntry(dict(snapshot), self._expiry(ttl_seconds))
+        key = self._key_telemetry(vehicle_id)
+        await self._redis.set(key, orjson.dumps(snapshot))
+        if ttl_seconds is not None:
+            await self._redis.expire(key, int(ttl_seconds))
 
-    def get_telemetry_snapshot(self, vehicle_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            self._purge_expired(self._telemetry_snapshots)
-            entry = self._telemetry_snapshots.get(vehicle_id)
-            if not entry:
-                return None
-            return dict(entry.value)
+    async def get_telemetry_snapshot(self, vehicle_id: str) -> dict[str, Any] | None:
+        data = await self._redis.get(self._key_telemetry(vehicle_id))
+        if data is None:
+            return None
+        return _orjson_loads_redis_value(data)
 
-    def set_vehicle_status(self, vehicle_id: str, status: str, ttl_seconds: int | float | None = None) -> None:
-        with self._lock:
-            self._vehicle_status[vehicle_id] = _CacheEntry(status, self._expiry(ttl_seconds))
+    async def set_vehicle_status(self, vehicle_id: str, status: str, ttl_seconds: int | float | None = None) -> None:
+        key = self._key_vehicle_status(vehicle_id)
+        await self._redis.set(key, status)
+        if ttl_seconds is not None:
+            await self._redis.expire(key, int(ttl_seconds))
 
-    def get_vehicle_status(self, vehicle_id: str) -> str | None:
-        with self._lock:
-            self._purge_expired(self._vehicle_status)
-            entry = self._vehicle_status.get(vehicle_id)
-            return None if entry is None else str(entry.value)
+    async def get_vehicle_status(self, vehicle_id: str) -> str | None:
+        return await self._redis.get(self._key_vehicle_status(vehicle_id))
 
-    def set_heartbeat(self, vehicle_id: str, timestamp: str, ttl_seconds: int | float | None = None) -> None:
-        with self._lock:
-            self._heartbeats[vehicle_id] = _CacheEntry(timestamp, self._expiry(ttl_seconds))
+    async def set_heartbeat(self, vehicle_id: str, timestamp: str, ttl_seconds: int | float | None = None) -> None:
+        key = self._key_heartbeat(vehicle_id)
+        await self._redis.set(key, timestamp)
+        if ttl_seconds is not None:
+            await self._redis.expire(key, int(ttl_seconds))
 
-    def allow_rate_limit(self, client_id: str, limit: int, window_seconds: int) -> bool:
-        now = self._now()
-        cutoff = now - float(window_seconds)
-        with self._lock:
-            bucket = self._rate_limits[client_id]
-            while bucket and bucket[0] <= cutoff:
-                bucket.popleft()
-            if len(bucket) >= limit:
-                return False
-            bucket.append(now)
-            return True
+    async def allow_rate_limit(self, client_id: str, limit: int, window_seconds: int) -> bool:
+        key = self._key_rate_limit(client_id)
+        now_ms = await self._redis.time()
+        now_score = float(now_ms[0]) + (float(now_ms[1]) / 1_000_000.0)
+        cutoff = now_score - float(window_seconds)
+        pipe = self._redis.pipeline()
+        pipe.zremrangebyscore(key, 0, cutoff)
+        pipe.zcard(key)
+        _, count = await pipe.execute()
+        if int(count) >= limit:
+            return False
+        member = f"{now_score}:{uuid.uuid4().hex}"
+        pipe = self._redis.pipeline()
+        pipe.zadd(key, {member: now_score})
+        pipe.expire(key, int(window_seconds))
+        await pipe.execute()
+        return True
 
-    def set_command_state(self, command_id: str, mapping: dict[str, Any], ttl_seconds: int | float | None = None) -> None:
-        with self._lock:
-            self._command_state[command_id] = _CacheEntry(dict(mapping), self._expiry(ttl_seconds))
+    async def set_command_state(self, command_id: str, mapping: dict[str, Any], ttl_seconds: int | float | None = None) -> None:
+        key = self._key_command_state(command_id)
+        await self._redis.set(key, orjson.dumps(mapping))
+        if ttl_seconds is not None:
+            await self._redis.expire(key, int(ttl_seconds))
 
-    def update_command_state(
+    async def update_command_state(
         self,
         command_id: str,
         mapping: dict[str, Any],
         ttl_seconds: int | float | None = None,
     ) -> None:
-        with self._lock:
-            self._purge_expired(self._command_state)
-            current = self._command_state.get(command_id)
-            if current is None:
-                self._command_state[command_id] = _CacheEntry(dict(mapping), self._expiry(ttl_seconds))
-                return
-            current.value.update(mapping)
-            if ttl_seconds is not None:
-                current.expires_at = self._expiry(ttl_seconds)
+        key = self._key_command_state(command_id)
+        current = await self.get_command_state(command_id) or {}
+        current.update(mapping)
+        await self._redis.set(key, orjson.dumps(current))
+        if ttl_seconds is not None:
+            await self._redis.expire(key, int(ttl_seconds))
 
-    def get_command_state(self, command_id: str) -> dict[str, Any] | None:
-        with self._lock:
-            self._purge_expired(self._command_state)
-            entry = self._command_state.get(command_id)
-            if not entry:
-                return None
-            return dict(entry.value)
+    async def get_command_state(self, command_id: str) -> dict[str, Any] | None:
+        data = await self._redis.get(self._key_command_state(command_id))
+        if data is None:
+            return None
+        return _orjson_loads_redis_value(data)
 
-    def append_audit_event(self, record: dict[str, Any]) -> str:
+    async def append_audit_event(self, record: dict[str, Any]) -> str:
         event_id = uuid.uuid4().hex
         payload = {"id": event_id, **record}
-        with self._lock:
-            self._audit_events.append(payload)
+        key = "aero:audit:stream"
+        await self._redis.xadd(key, {k: str(v) for k, v in payload.items()}, maxlen=10000, approximate=True)
         return event_id
 
 
-_runtime_cache = InMemoryRuntimeCache()
+_runtime_cache = RedisRuntimeCache()
 
 
-def get_runtime_cache() -> InMemoryRuntimeCache:
+def get_runtime_cache() -> RedisRuntimeCache:
     return _runtime_cache

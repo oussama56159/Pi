@@ -1,6 +1,8 @@
 import axios from 'axios';
 import apiClient from './client';
 
+const withIdempotencyHeaders = () => ({ headers: { 'Idempotency-Key': crypto.randomUUID() } });
+
 // ─── Auth Endpoints ───
 export const authAPI = {
   login: (credentials) => apiClient.post('/auth/login', credentials),
@@ -21,7 +23,7 @@ export const vehicleAPI = {
   delete: (id) => apiClient.delete(`/fleet/vehicles/${id}`),
   telemetry: (id) => apiClient.get(`/telemetry/vehicles/${id}/latest`),
   telemetryHistory: (id, params) => apiClient.get(`/telemetry/vehicles/${id}/history`, { params }),
-  sendCommand: (id, command) => apiClient.post('/commands', { vehicle_id: id, ...command }),
+  sendCommand: (id, command) => apiClient.post('/commands', { vehicle_id: id, ...command }, withIdempotencyHeaders()),
   getParameters: (id) => apiClient.get(`/fleet/vehicles/${id}/parameters`),
   setParameter: (id, param) => apiClient.put(`/fleet/vehicles/${id}/parameters`, param),
 };
@@ -51,9 +53,9 @@ export const missionAPI = {
   status: (data) => apiClient.post('/missions/status', data),
   upload: (vehicleId, missionId) => apiClient.post('/missions/upload', { vehicle_id: vehicleId, mission_id: missionId }),
   download: (vehicleId, name) => apiClient.post('/missions/download', { vehicle_id: vehicleId, ...(name ? { name } : {}) }),
-  start: (vehicleId, missionId) => apiClient.post('/commands', { vehicle_id: vehicleId, command: 'mission_start', params: { mission_id: missionId } }),
-  pause: (vehicleId) => apiClient.post('/commands', { vehicle_id: vehicleId, command: 'mission_pause' }),
-  resume: (vehicleId) => apiClient.post('/commands', { vehicle_id: vehicleId, command: 'mission_resume' }),
+  start: (vehicleId, missionId) => apiClient.post('/commands', { vehicle_id: vehicleId, command: 'mission_start', params: { mission_id: missionId } }, withIdempotencyHeaders()),
+  pause: (vehicleId) => apiClient.post('/commands', { vehicle_id: vehicleId, command: 'mission_pause' }, withIdempotencyHeaders()),
+  resume: (vehicleId) => apiClient.post('/commands', { vehicle_id: vehicleId, command: 'mission_resume' }, withIdempotencyHeaders()),
   getTemplates: () => apiClient.get('/missions/templates'),
 };
 
@@ -109,5 +111,12 @@ export const systemAPI = {
   config: () => apiClient.get('/system/config'),
   updateConfig: (data) => apiClient.put('/system/config', data),
   getLogs: (params) => apiClient.get('/system/logs', { params }),
+};
+
+// ─── Vision Endpoints ───
+export const visionAPI = {
+  start: (vehicleId, sourceUrl) => apiClient.post(`/vision/streams/${vehicleId}/start`, { source_url: sourceUrl }),
+  stop: (vehicleId) => apiClient.post(`/vision/streams/${vehicleId}/stop`),
+  latest: (vehicleId) => apiClient.get(`/vision/streams/${vehicleId}/detections/latest`),
 };
 

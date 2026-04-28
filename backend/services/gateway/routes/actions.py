@@ -33,7 +33,7 @@ async def registry() -> ActionRegistryResponse:
 async def ingest_audit_event(request: Request, event: ActionAuditEvent, user: CurrentUser) -> dict[str, Any]:
     """Ingest an action audit event.
 
-    Persists to an in-memory runtime log.
+    Persists to a Redis stream runtime log.
     """
 
     # Fill actor/org if client didn't include it.
@@ -53,8 +53,8 @@ async def ingest_audit_event(request: Request, event: ActionAuditEvent, user: Cu
         "user_agent": request.headers.get("User-Agent"),
     }
 
-    stream_id = get_runtime_cache().append_audit_event(record)
+    stream_id = await get_runtime_cache().append_audit_event(record)
 
     logger.info("action_audit_ingest action_id=%s outcome=%s stream_id=%s", event.action_id, event.outcome, stream_id)
 
-    return {"accepted": True, "storage": "memory", "id": stream_id}
+    return {"accepted": True, "storage": "redis_stream", "id": stream_id}

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.shared.database.postgres import get_postgres_session
@@ -22,10 +22,15 @@ async def api_dispatch_command(
     data: CommandRequest,
     user: CurrentUser,
     org_id: OrgId,
+    idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     db: AsyncSession = Depends(get_postgres_session),
 ):
     """Send a command to a vehicle (pilot+ role required)."""
-    return await dispatch_command(db, org_id, UUID(user["user_id"]), data)
+    resolved_idempotency_key = idempotency_key or data.idempotency_key
+    if not resolved_idempotency_key:
+        raise HTTPException(status_code=400, detail="Idempotency-Key header (or idempotency_key body field) is required")
+    request_data = data.model_copy(update={"idempotency_key": resolved_idempotency_key})
+    return await dispatch_command(db, org_id, UUID(user["user_id"]), request_data, user=user)
 
 
 @router.get("", response_model=list[CommandResponse])

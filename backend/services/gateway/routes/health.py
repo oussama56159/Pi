@@ -10,6 +10,8 @@ import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter
+from fastapi.responses import Response
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import text
 
 from backend.shared.database.postgres import get_direct_postgres_session
@@ -58,4 +60,9 @@ async def readiness():
             "checks": checks,
         },
     )
+
+
+@router.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 

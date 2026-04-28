@@ -80,7 +80,7 @@ jobs:
             --set dashboard.image.tag=${SHA} \
             --set global.environment=production \
             --values ./infra/helm/aerocommand/values.yaml \
-            --wait --timeout=600s
+            --wait --timeout=600s --atomic
 
       - name: Verify deployment
         run: |
@@ -96,6 +96,13 @@ jobs:
             sleep 10
           done
           echo "Production health check failed"; exit 1
+
+      - name: Rollback on failed smoke test
+        if: failure()
+        run: |
+          helm rollback aerocommand -n ${KUBE_NAMESPACE}
+          kubectl rollout status deployment/api-server -n ${KUBE_NAMESPACE} --timeout=300s
+          kubectl rollout status deployment/dashboard -n ${KUBE_NAMESPACE} --timeout=300s
 
   # ── Run Database Migrations ──
   migrate:
