@@ -57,6 +57,12 @@ logger = logging.getLogger(__name__)
 
 _MISSION_GRAPH_SETTINGS_KEY = "mission_graph"
 
+_MISSION_TERMINAL_STATUSES = {
+    MissionStatus.COMPLETED,
+    MissionStatus.ABORTED,
+    MissionStatus.FAILED,
+}
+
 
 _mission_download_listener_started = False
 _mission_download_pending: dict[str, asyncio.Future[dict]] = {}
@@ -119,6 +125,45 @@ async def create_mission(
 
     await db.flush()
     return await _get_mission_response(db, mission.id, org_id)
+
+
+def _aggregate_mission_status(
+    mission: Mission,
+    active_assignments: list[MissionAssignment],
+    latest_status: MissionStatus,
+) -> MissionStatus:
+    if mission.status in _MISSION_TERMINAL_STATUSES:
+        return mission.status
+
+    if not active_assignments:
+        return mission.status
+
+    statuses = [assignment.status for assignment in active_assignments]
+
+    if latest_status == MissionStatus.ABORTED or MissionStatus.ABORTED in statuses:
+        return MissionStatus.ABORTED
+
+    if all(status in _MISSION_TERMINAL_STATUSES for status in statuses):
+        if MissionStatus.FAILED in statuses:
+            return MissionStatus.FAILED
+        return MissionStatus.COMPLETED
+
+    if latest_status == MissionStatus.IN_PROGRESS or MissionStatus.IN_PROGRESS in statuses:
+        return MissionStatus.IN_PROGRESS
+
+    if latest_status == MissionStatus.PAUSED or MissionStatus.PAUSED in statuses:
+        return MissionStatus.PAUSED
+
+    if latest_status == MissionStatus.UPLOADING or MissionStatus.UPLOADING in statuses:
+        return MissionStatus.UPLOADING
+
+    if latest_status == MissionStatus.UPLOADED or MissionStatus.UPLOADED in statuses:
+        return MissionStatus.UPLOADED
+
+    if all(status == MissionStatus.READY for status in statuses):
+        return MissionStatus.READY
+
+    return mission.status
 
 
 async def get_mission(db: AsyncSession, org_id: UUID, mission_id: UUID, *, user: dict | None = None) -> MissionResponse:
@@ -359,7 +404,7 @@ async def update_mission_status(
     )).scalars().all()
     if active_assignments:
         mission.progress = sum(a.progress for a in active_assignments) / len(active_assignments)
-        mission.status = data.status
+        mission.status = _aggregate_mission_status(mission, active_assignments, data.status)
 
     await db.flush()
     await _emit_assignment_updates(org_id, [assignment])

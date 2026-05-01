@@ -2,6 +2,8 @@
 
 AeroCommand is a cloud-plus-edge platform for operating autonomous drone and robot fleets.
 
+For an academic/professional submission document (project sheet), see: **PROJECT_SHEET.md**.
+
 It combines:
 - A FastAPI backend with MQTT ingestion and WebSocket fanout
 - A React dashboard for operations and administration

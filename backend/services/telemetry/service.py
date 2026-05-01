@@ -15,6 +15,7 @@ from backend.shared.database.postgres import get_direct_postgres_session, get_po
 from backend.shared.runtime_cache import get_runtime_cache
 from backend.shared.schemas.telemetry import TelemetryFrame, TelemetrySnapshot
 
+from backend.services.alert.service import create_alert, evaluate_telemetry_against_rules
 from backend.services.fleet.models import Vehicle
 from backend.services.telemetry.models import TelemetryHistoryRecord
 from backend.shared.schemas.vehicle import VehicleStatus
@@ -69,6 +70,7 @@ async def process_telemetry(vehicle_id: str, payload: dict) -> None:
         _store_in_postgres(frame),
         _cache_in_memory(frame),
         _broadcast_via_websocket(vehicle_id, frame),
+        _evaluate_and_persist_alerts(frame),
         return_exceptions=True,
     )
 
@@ -127,6 +129,48 @@ async def _broadcast_via_websocket(vehicle_id: str, frame: TelemetryFrame) -> No
         await ws_manager.broadcast_telemetry(vehicle_id, org_id or "default", data)
     except Exception as e:
         logger.error(f"WebSocket broadcast failed for {vehicle_id}: {e}")
+
+
+async def _evaluate_and_persist_alerts(frame: TelemetryFrame) -> None:
+    """Evaluate telemetry rules and persist any generated alerts."""
+    try:
+        org_id = await _get_vehicle_org_id(frame.vehicle_id)
+        if not org_id:
+            return
+
+        org_uuid = UUID(org_id)
+        db = await get_direct_postgres_session()
+        persisted_alerts: list[dict] = []
+
+        async with db:
+            triggered_alerts = await evaluate_telemetry_against_rules(db, org_uuid, frame)
+            if not triggered_alerts:
+                return
+
+            for alert_data in triggered_alerts:
+                metadata = dict(alert_data.metadata or {})
+                metadata.setdefault("source", "telemetry")
+                metadata.setdefault("vehicle_id", frame.vehicle_id)
+                if metadata.get("rule_id") is not None:
+                    metadata["rule_id"] = str(metadata["rule_id"])
+                if metadata.get("zone_id") is not None:
+                    metadata["zone_id"] = str(metadata["zone_id"])
+
+                persisted = await create_alert(
+                    db,
+                    org_uuid,
+                    alert_data.model_copy(update={"metadata": metadata}),
+                )
+                payload = persisted.model_dump(mode="json")
+                payload["metadata"] = metadata
+                persisted_alerts.append(payload)
+
+            await db.commit()
+
+        for alert_payload in persisted_alerts:
+            await ws_manager.broadcast_alert(org_id, alert_payload)
+    except Exception as e:
+        logger.error(f"Telemetry alert evaluation failed for {frame.vehicle_id}: {e}")
 
 
 async def process_heartbeat(vehicle_id: str, payload: dict) -> None:

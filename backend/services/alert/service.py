@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 from fastapi import HTTPException
@@ -38,6 +38,28 @@ async def create_alert(db: AsyncSession, org_id: UUID, data: AlertCreate) -> Ale
     await db.flush()
     await db.refresh(alert)
     return AlertResponse.model_validate(alert)
+
+
+async def _rule_alert_in_cooldown(
+    db: AsyncSession,
+    org_id: UUID,
+    vehicle_id: UUID,
+    rule_id: UUID,
+    cooldown_seconds: int,
+) -> bool:
+    if cooldown_seconds <= 0:
+        return False
+
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=int(cooldown_seconds))
+    result = await db.execute(
+        select(Alert.id).where(
+            Alert.organization_id == org_id,
+            Alert.vehicle_id == vehicle_id,
+            Alert.created_at >= cutoff,
+            Alert.metadata_json["rule_id"].as_string() == str(rule_id),
+        ).order_by(Alert.created_at.desc()).limit(1)
+    )
+    return result.scalar_one_or_none() is not None
 
 
 async def list_alerts(
@@ -92,6 +114,11 @@ async def evaluate_telemetry_against_rules(
     """Evaluate incoming telemetry against all active alert rules."""
     triggered_alerts: list[AlertCreate] = []
 
+    try:
+        vehicle_uuid = UUID(telemetry.vehicle_id) if telemetry.vehicle_id else None
+    except Exception:
+        vehicle_uuid = None
+
     # Fetch active rules
     result = await db.execute(
         select(AlertRuleRecord).where(
@@ -103,6 +130,14 @@ async def evaluate_telemetry_against_rules(
 
     for rule in rules:
         if evaluate_condition(telemetry, rule.condition):
+            if vehicle_uuid is not None and await _rule_alert_in_cooldown(
+                db,
+                org_id,
+                vehicle_uuid,
+                rule.id,
+                rule.cooldown_seconds,
+            ):
+                continue
             triggered_alerts.append(AlertCreate(
                 vehicle_id=UUID(telemetry.vehicle_id) if telemetry.vehicle_id else None,
                 severity=rule.severity,

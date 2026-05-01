@@ -58,3 +58,21 @@ async def test_upload_mission_publishes_to_mqtt(monkeypatch):
     assert fake_mqtt.published
     assert "mission" in fake_mqtt.published[0][0]
 
+
+@pytest.mark.parametrize(
+    "assignment_statuses, latest_status, expected_status",
+    [
+        ([mission_service.MissionStatus.IN_PROGRESS, mission_service.MissionStatus.READY], mission_service.MissionStatus.COMPLETED, mission_service.MissionStatus.IN_PROGRESS),
+        ([mission_service.MissionStatus.COMPLETED, mission_service.MissionStatus.COMPLETED], mission_service.MissionStatus.COMPLETED, mission_service.MissionStatus.COMPLETED),
+        ([mission_service.MissionStatus.IN_PROGRESS, mission_service.MissionStatus.ABORTED], mission_service.MissionStatus.ABORTED, mission_service.MissionStatus.ABORTED),
+    ],
+)
+def test_aggregate_mission_status_handles_multi_vehicle_progress(assignment_statuses, latest_status, expected_status):
+    mission = SimpleNamespace(status=mission_service.MissionStatus.READY)
+    active_assignments = [
+        SimpleNamespace(status=status, progress=progress)
+        for status, progress in zip(assignment_statuses, [25.0, 75.0], strict=False)
+    ]
+
+    assert mission_service._aggregate_mission_status(mission, active_assignments, latest_status) == expected_status
+

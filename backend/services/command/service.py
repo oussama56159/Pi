@@ -201,6 +201,8 @@ async def handle_command_ack(ack: CommandAck) -> None:
                 await session.execute(select(CommandRecord).where(CommandRecord.id == command_id))
             ).scalar_one_or_none()
             if row is not None:
+                if row.status in terminal_statuses:
+                    return
                 row.status = status
                 row.result = result_payload
                 if status in acked_statuses and row.acknowledged_at is None:
@@ -319,7 +321,34 @@ async def _command_timeout_watcher(command_id: str, timeout: int) -> None:
     cache = get_runtime_cache()
     state = await cache.get_command_state(command_id)
     if state and state.get("status") in (CommandStatus.PENDING.value, CommandStatus.SENT.value):
-        await cache.update_command_state(command_id, {"status": CommandStatus.TIMEOUT.value})
+        timeout_at = datetime.now(timezone.utc)
+        timeout_message = f"Command timed out after {timeout}s"
+        try:
+            session = await get_direct_postgres_session()
+            async with session:
+                row = (
+                    await session.execute(select(CommandRecord).where(CommandRecord.id == UUID(command_id)))
+                ).scalar_one_or_none()
+                if row is None:
+                    logger.warning("Command %s timed out but no database row was found", command_id)
+                elif row.status in {CommandStatus.REJECTED, CommandStatus.FAILED, CommandStatus.COMPLETED, CommandStatus.TIMEOUT}:
+                    return
+                else:
+                    row.status = CommandStatus.TIMEOUT
+                    row.completed_at = timeout_at
+                    row.error_message = timeout_message
+                    await session.commit()
+        except Exception as exc:
+            logger.warning("Failed to persist timeout for command %s: %s", command_id, exc)
+
+        await cache.update_command_state(
+            command_id,
+            {
+                "status": CommandStatus.TIMEOUT.value,
+                "completed_at": timeout_at.isoformat(),
+                "error_message": timeout_message,
+            },
+        )
         logger.warning(f"Command {command_id} timed out after {timeout}s")
 
 
