@@ -18,8 +18,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml ./
-# Force CPU-only PyTorch wheels to avoid downloading CUDA/NVIDIA packages.
-RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cpu \
+# Install CUDA-enabled PyTorch wheels so the container can use NVIDIA GPUs.
+RUN pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
     torch torchvision
 RUN pip install --no-cache-dir \
     fastapi[standard] \

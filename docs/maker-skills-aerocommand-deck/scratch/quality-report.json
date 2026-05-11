@@ -1,0 +1,34 @@
+{
+  "workspace": "C:\\Web_UI\\pi_group\\docs\\maker-skills-aerocommand-deck",
+  "pptx": "C:\\Web_UI\\pi_group\\docs\\maker-skills-aerocommand-deck\\output\\output.pptx",
+  "checks": {
+    "pptx_package": {
+      "slide_count": 12,
+      "media_count": 5,
+      "chart_count": 0,
+      "zero_byte_media": [
+        "ppt/media/",
+        "ppt/media/image-1-1.png",
+        "ppt/media/image-10-1.png",
+        "ppt/media/image-10-2.png",
+        "ppt/media/image-12-1.png"
+      ],
+      "invalid_png_media": [],
+      "placeholder_text": [],
+      "debug_line_colors": [],
+      "slide_numbers": [],
+      "warnings": [],
+      "failures": [
+        "PPTX contains zero-byte media parts: ppt/media/, ppt/media/image-1-1.png, ppt/media/image-10-1.png, ppt/media/image-10-2.png, ppt/media/image-12-1.png"
+      ]
+    },
+    "output_hygiene": {
+      "output_dir": "C:\\Web_UI\\pi_group\\docs\\maker-skills-aerocommand-deck\\output",
+      "unexpected_files": []
+    }
+  },
+  "failures": [
+    "PPTX contains zero-byte media parts: ppt/media/, ppt/media/image-1-1.png, ppt/media/image-10-1.png, ppt/media/image-10-2.png, ppt/media/image-12-1.png"
+  ],
+  "warnings": []
+}

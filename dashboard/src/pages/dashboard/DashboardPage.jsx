@@ -49,6 +49,20 @@ function ActiveVehicleRow({ vehicle }) {
   );
 }
 
+function getAlertTime(alert) {
+  const rawTime = alert?.receivedAt || alert?.timestamp || alert?.created_at || alert?.createdAt;
+  const parsed = rawTime ? new Date(rawTime) : new Date(0);
+  return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed;
+}
+
+function getAlertTitle(alert) {
+  return alert?.title || alert?.subject || alert?.message || 'Notification';
+}
+
+function getAlertMessage(alert) {
+  return alert?.message || '';
+}
+
 export default function DashboardPage() {
   const vehicles = useFleetStore((s) => s.vehicles);
   const alerts = useTelemetryStore((s) => s.alerts);
@@ -113,8 +127,11 @@ export default function DashboardPage() {
                     alert.severity === 'warning' ? 'text-amber-400' : 'text-blue-400'
                   }`} />
                   <div>
-                    <p className="text-sm text-slate-300">{alert.message}</p>
-                    <p className="text-xs text-slate-500 mt-1">{new Date(alert.timestamp).toLocaleTimeString()}</p>
+                    <p className="text-sm font-medium text-slate-200">{getAlertTitle(alert)}</p>
+                    {getAlertMessage(alert) && (
+                      <p className="text-sm text-slate-300 mt-1">{getAlertMessage(alert)}</p>
+                    )}
+                    <p className="text-xs text-slate-500 mt-1">{getAlertTime(alert).toLocaleString()}</p>
                   </div>
                 </div>
               </div>

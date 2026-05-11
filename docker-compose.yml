@@ -66,9 +66,13 @@ services:
       dockerfile: Dockerfile
       target: production
     container_name: aero-api
+    # Legacy docker-compose (v1) compatibility for NVIDIA GPUs.
+    runtime: nvidia
     environment:
       ENVIRONMENT: development
       DEBUG: "true"
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
       POSTGRES_HOST: postgres
       POSTGRES_PORT: "5432"
       POSTGRES_USER: aerocommand
@@ -79,6 +83,9 @@ services:
       REDIS_PASSWORD: ""
       MQTT_BROKER_HOST: emqx
       MQTT_BROKER_PORT: "1883"
+      # Store YOLO assets in a writable location for the non-root container user.
+      ULTRALYTICS_HOME: /tmp/ultralytics
+      VISION_MODEL_NAME: /tmp/yolov8n.pt
       JWT_SECRET_KEY: dev_jwt_secret_change_in_production
       AUTO_CREATE_DB: "true"
       SEED_OWNER_ENABLED: "true"

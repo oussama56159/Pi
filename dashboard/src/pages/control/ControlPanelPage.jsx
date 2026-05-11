@@ -71,51 +71,55 @@ export default function ControlPanelPage() {
   const handleSend = async (cmd) => {
     if (!effectiveSelectedId) return;
 
-    if (cmd === COMMANDS.TAKEOFF) {
-      const existingOrigin = takeoffOriginRef.current[effectiveSelectedId];
-      const isArmed = Boolean(vehicle?.armed ?? t?.armed);
+    const toastSuccess = (message) =>
+      addToast({ type: 'success', title: 'Command Sent', message });
 
-      // If already airborne/armed and we have an origin, treat TAKEOFF as "return to takeoff point".
-      if (existingOrigin && isArmed) {
-        await sendCommand(effectiveSelectedId, {
-          command: COMMANDS.GOTO,
-          params: {
-            lat: existingOrigin.lat,
-            lng: existingOrigin.lng,
-            // Keep current altitude (safer across autopilots/altitude frames).
-            alt: -1,
-          },
-        });
-        addToast({
-          type: 'success',
-          title: 'Command Sent',
-          message: `RETURN TO TAKEOFF POINT sent to ${vehicle?.name || 'vehicle'}`,
-        });
+    const toastError = (err) => {
+      const detail =
+        err?.response?.data?.detail ||
+        err?.message ||
+        'Command failed — check vehicle connection and try again.';
+      addToast({ type: 'error', title: 'Command Failed', message: String(detail) });
+    };
+
+    try {
+      if (cmd === COMMANDS.TAKEOFF) {
+        const existingOrigin = takeoffOriginRef.current[effectiveSelectedId];
+        const isArmed = Boolean(vehicle?.armed ?? t?.armed);
+
+        // If already airborne/armed and we have an origin, treat TAKEOFF as "return to takeoff point".
+        if (existingOrigin && isArmed) {
+          await sendCommand(effectiveSelectedId, {
+            command: COMMANDS.GOTO,
+            params: {
+              lat: existingOrigin.lat,
+              lng: existingOrigin.lng,
+              // Keep current altitude (safer across autopilots/altitude frames).
+              alt: -1,
+            },
+          });
+          toastSuccess(`RETURN TO TAKEOFF POINT sent to ${vehicle?.name || 'vehicle'}`);
+          return;
+        }
+
+        // First TAKEOFF: record origin if we have a valid GPS fix.
+        const lat = Number(t?.lat ?? t?.gps?.lat);
+        const lng = Number(t?.lng ?? t?.gps?.lng);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          takeoffOriginRef.current[effectiveSelectedId] = { lat, lng };
+        }
+
+        await sendCommand(effectiveSelectedId, { command: cmd, params: { altitude: 1.0 } });
+        toastSuccess(`${String(cmd).replace(/_/g, ' ').toUpperCase()} sent to ${vehicle?.name || 'vehicle'}`);
         return;
       }
 
-      // First TAKEOFF: record origin if we have a valid GPS fix.
-      const lat = Number(t?.lat ?? t?.gps?.lat);
-      const lng = Number(t?.lng ?? t?.gps?.lng);
-      if (Number.isFinite(lat) && Number.isFinite(lng)) {
-        takeoffOriginRef.current[effectiveSelectedId] = { lat, lng };
-      }
-
-      await sendCommand(effectiveSelectedId, { command: cmd, params: { altitude: 1.0 } });
-      addToast({
-        type: 'success',
-        title: 'Command Sent',
-        message: `${String(cmd).replace(/_/g, ' ').toUpperCase()} sent to ${vehicle?.name || 'vehicle'}`,
-      });
-      return;
+      await sendCommand(effectiveSelectedId, { command: cmd });
+      toastSuccess(`${String(cmd).replace(/_/g, ' ').toUpperCase()} sent to ${vehicle?.name || 'vehicle'}`);
+    } catch (err) {
+      toastError(err);
+      throw err; // re-throw so ActionButton's audit trail records the failure
     }
-
-    await sendCommand(effectiveSelectedId, { command: cmd });
-    addToast({
-      type: 'success',
-      title: 'Command Sent',
-      message: `${String(cmd).replace(/_/g, ' ').toUpperCase()} sent to ${vehicle?.name || 'vehicle'}`,
-    });
   };
 
   return (

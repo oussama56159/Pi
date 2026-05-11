@@ -4,6 +4,8 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from dataclasses import asdict
+
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, HttpUrl
 
@@ -50,7 +52,7 @@ async def start_stream(
     if err:
         raise HTTPException(status_code=503, detail=f"Vision dependencies unavailable: {err}")
     state = get_vision_service().start_stream(str(vehicle_id), str(data.source_url))
-    return StreamStateResponse(**state.__dict__)
+    return StreamStateResponse(**asdict(state))
 
 
 @router.post(
@@ -75,7 +77,7 @@ async def latest_detections(
     state = get_vision_service().get_state(str(vehicle_id))
     if state is None:
         raise HTTPException(status_code=404, detail="Vision stream is not running for this vehicle")
-    return StreamStateResponse(**state.__dict__)
+    return StreamStateResponse(**asdict(state))
 
 
 @router.get("/streams/{vehicle_id}/annotated.mjpg")

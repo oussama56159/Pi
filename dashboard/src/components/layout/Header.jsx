@@ -85,6 +85,28 @@ export default function Header() {
     setDarkThemeEnabled(next);
   };
 
+  const getAlertTime = (alert) => {
+    const rawTime = alert?.receivedAt || alert?.timestamp || alert?.created_at || alert?.createdAt;
+    const parsed = rawTime ? new Date(rawTime) : new Date(0);
+    return Number.isNaN(parsed.getTime()) ? new Date(0) : parsed;
+  };
+
+  const getAlertTitle = (alert) => {
+    return alert?.title || alert?.subject || alert?.message || 'Notification';
+  };
+
+  const getAlertMessage = (alert) => {
+    return alert?.message || '';
+  };
+
+  const getBadgeColorForSeverity = (severity) => {
+    const normalized = String(severity || 'info').toLowerCase();
+    if (normalized === 'critical' || normalized === 'emergency') return 'red';
+    if (normalized === 'warning') return 'amber';
+    if (normalized === 'success') return 'green';
+    return 'blue';
+  };
+
   return (
     <header className="sticky top-0 z-30 h-16 bg-slate-900/80 backdrop-blur-xl border-b border-slate-800 flex items-center justify-between px-6">
       <div className="flex items-center gap-4">
@@ -143,8 +165,14 @@ export default function Header() {
               <div className="overflow-y-auto max-h-72">
                 {alerts.slice(0, 10).map((a) => (
                   <div key={a.id} className="px-3 py-2.5 border-b border-slate-700/50 hover:bg-slate-700/30">
-                    <p className="text-sm text-slate-300">{a.message}</p>
-                    <p className="text-xs text-slate-500 mt-1">{a.severity}</p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-sm font-medium text-slate-200 truncate">{getAlertTitle(a)}</p>
+                      <Badge color={getBadgeColorForSeverity(a.severity)}>{String(a.severity || 'info').toLowerCase()}</Badge>
+                    </div>
+                    {getAlertMessage(a) && (
+                      <p className="text-sm text-slate-300 mt-1 line-clamp-2">{getAlertMessage(a)}</p>
+                    )}
+                    <p className="text-xs text-slate-500 mt-1">{getAlertTime(a).toLocaleString()}</p>
                   </div>
                 ))}
                 {alerts.length === 0 && (

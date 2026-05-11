@@ -15,11 +15,9 @@ const VehicleDetailPage = lazy(() => import('@/pages/fleet/VehicleDetailPage'));
 const TelemetryPage = lazy(() => import('@/pages/telemetry/TelemetryPage'));
 const CameraPage = lazy(() => import('@/pages/camera/CameraPage'));
 const LiveMapPage = lazy(() => import('@/pages/map/LiveMapPage'));
-const DroneSimulation3DPage = lazy(() => import('@/pages/simulation/DroneSimulation3DPage'));
 const MissionPlannerPage = lazy(() => import('@/pages/missions/MissionPlannerPage'));
 const ControlPanelPage = lazy(() => import('@/pages/control/ControlPanelPage'));
 const NotificationHistoryPage = lazy(() => import('@/pages/notifications/NotificationHistoryPage'));
-const AlertsPage = lazy(() => import('@/pages/alerts/AlertsPage'));
 const AnalyticsPage = lazy(() => import('@/pages/analytics/AnalyticsPage'));
 const UsersPage = lazy(() => import('@/pages/users/UsersPage'));
 const AdminPage = lazy(() => import('@/pages/admin/AdminPage'));
@@ -83,7 +81,6 @@ export default function App() {
         <Route path="telemetry" element={<TelemetryPage />} />
         <Route path="camera" element={<CameraPage />} />
         <Route path="map" element={<LiveMapPage />} />
-        <Route path="simulation-3d" element={<DroneSimulation3DPage />} />
         <Route path="missions" element={
           <ProtectedRoute requiredRoles={[ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.PILOT, ROLES.OPERATOR]}>
             <MissionPlannerPage />
@@ -95,7 +92,6 @@ export default function App() {
           </ProtectedRoute>
         } />
         <Route path="notifications" element={<NotificationHistoryPage />} />
-        <Route path="alerts" element={<AlertsPage />} />
         <Route path="analytics" element={<AnalyticsPage />} />
         <Route path="users" element={
           <ProtectedRoute requiredRoles={[ROLES.SUPER_ADMIN, ROLES.ADMIN]}>

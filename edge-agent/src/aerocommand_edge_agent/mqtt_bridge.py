@@ -111,6 +111,7 @@ class MqttBridge:
                     async def publish_telemetry() -> None:
                         while True:
                             frame = telemetry_state.to_frame()
+                            telemetry_state.record_frame(frame)
                             payload = orjson.dumps(frame.model_dump(mode="json"))
                             await client.publish(self.telemetry_topic, payload, qos=self.qos)
                             await asyncio.sleep(telemetry_interval_s)

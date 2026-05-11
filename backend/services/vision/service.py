@@ -4,6 +4,7 @@ from collections import Counter
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 import logging
+import queue
 import threading
 import time
 from typing import Any
@@ -91,24 +92,59 @@ class VisionWorker:
 
         self.state.running = True
         self.state.started_at = datetime.now(tz=timezone.utc).isoformat()
-        frame_counter = 0
+
+        # Single-slot queue: capture thread always overwrites with the latest frame so
+        # the inference thread never processes stale frames when inference is slow.
+        frame_queue: queue.Queue = queue.Queue(maxsize=1)
+
+        def _capture_loop() -> None:
+            """Reads frames as fast as the source allows, independent of inference speed."""
+            frame_counter = 0
+            try:
+                while not self._stop_event.is_set():
+                    ok, frame = capture.read()
+                    if not ok or frame is None:
+                        self.state.error = "Stream frame read failed"
+                        time.sleep(0.1)
+                        continue
+
+                    frame_counter += 1
+                    if settings.VISION_FRAME_SKIP > 0 and frame_counter % (settings.VISION_FRAME_SKIP + 1) != 0:
+                        continue
+
+                    if settings.VISION_MAX_WIDTH > 0 and frame.shape[1] > settings.VISION_MAX_WIDTH:
+                        ratio = settings.VISION_MAX_WIDTH / float(frame.shape[1])
+                        frame = cv2.resize(frame, (settings.VISION_MAX_WIDTH, int(frame.shape[0] * ratio)))
+
+                    # Drop the oldest frame if inference hasn't caught up yet, then
+                    # enqueue the fresh one so the inference thread always sees the
+                    # most recent frame.
+                    try:
+                        frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    try:
+                        frame_queue.put_nowait(frame)
+                    except queue.Full:
+                        pass
+            finally:
+                capture.release()
+
+        capture_thread = threading.Thread(
+            target=_capture_loop,
+            name=f"vision-capture-{self.vehicle_id}",
+            daemon=True,
+        )
+        capture_thread.start()
+
         last_frame_time = time.time()
 
         try:
             while not self._stop_event.is_set():
-                ok, frame = capture.read()
-                if not ok or frame is None:
-                    self.state.error = "Stream frame read failed"
-                    time.sleep(0.1)
+                try:
+                    frame = frame_queue.get(timeout=1.0)
+                except queue.Empty:
                     continue
-
-                frame_counter += 1
-                if settings.VISION_FRAME_SKIP > 0 and frame_counter % (settings.VISION_FRAME_SKIP + 1) != 0:
-                    continue
-
-                if settings.VISION_MAX_WIDTH > 0 and frame.shape[1] > settings.VISION_MAX_WIDTH:
-                    ratio = settings.VISION_MAX_WIDTH / float(frame.shape[1])
-                    frame = cv2.resize(frame, (settings.VISION_MAX_WIDTH, int(frame.shape[0] * ratio)))
 
                 inference = detector.infer(frame)
                 annotated = _draw_detections(frame, inference.detections)
@@ -132,7 +168,8 @@ class VisionWorker:
             self.state.error = str(exc)
             logger.exception("vision worker crashed vehicle=%s", self.vehicle_id)
         finally:
-            capture.release()
+            self._stop_event.set()  # ensure capture thread also exits
+            capture_thread.join(timeout=2.0)
             self.state.running = False
 
 

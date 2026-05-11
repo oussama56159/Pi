@@ -37,6 +37,10 @@ export default function ActionConfirmModal() {
     try {
       await pending.onConfirm?.();
       clear();
+    } catch {
+      // onConfirm already showed an error toast; just close the modal so the
+      // user can see it rather than leaving a stale confirmation dialog open.
+      clear();
     } finally {
       setLoading(false);
     }

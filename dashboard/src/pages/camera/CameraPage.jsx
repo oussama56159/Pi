@@ -119,8 +119,6 @@ export default function CameraPage() {
     const tokenQuery = token ? `&access_token=${encodeURIComponent(token)}` : '';
     return `${API_BASE_URL}/vision/streams/${selectedId}/annotated.mjpg?ts=${ts}${tokenQuery}`;
   }, [selectedId, visionEnabledByVehicle, token]);
-  const activeViewerUrl = annotatedStreamUrl || streamUrl;
-  const activeViewerKind = useMemo(() => getViewerKind(activeViewerUrl), [activeViewerUrl]);
   const detectionSummary = selectedId ? visionSummaryByVehicle[selectedId] : null;
 
   const liveValues = useMemo(() => {
@@ -201,17 +199,24 @@ export default function CameraPage() {
             </CardTitle>
           </CardHeader>
           <CardContent className="p-5">
-            {activeViewerKind === 'none' ? (
+            {selectedId && visionEnabledByVehicle[selectedId] && annotatedStreamUrl ? (
+              <img
+                key={`${selectedId}:annotated`}
+                src={annotatedStreamUrl}
+                alt="YOLO annotated stream"
+                className="w-full aspect-video object-contain rounded-xl border border-emerald-500/30 bg-black"
+              />
+            ) : viewerKind === 'none' ? (
               <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-6">
                 <div className="text-sm text-slate-300 font-medium">No stream URL configured</div>
                 <div className="text-xs text-slate-500 mt-1">
                   Set a browser-playable URL (MJPEG over HTTP works well; RTSP needs a proxy/transcoder).
                 </div>
               </div>
-            ) : activeViewerKind === 'video' ? (
+            ) : viewerKind === 'video' ? (
               <video
                 key={`${selectedId}:${loadKey}`}
-                src={activeViewerUrl}
+                src={streamUrl}
                 className="w-full aspect-video rounded-xl border border-slate-700 bg-black"
                 controls
                 autoPlay
@@ -221,7 +226,7 @@ export default function CameraPage() {
             ) : (
               <img
                 key={`${selectedId}:${loadKey}`}
-                src={activeViewerUrl}
+                src={streamUrl}
                 alt="Camera stream"
                 className="w-full aspect-video object-contain rounded-xl border border-slate-700 bg-black"
               />
@@ -324,7 +329,6 @@ export default function CameraPage() {
                         const { data } = await visionAPI.latest(selectedId);
                         setVisionEnabledByVehicle((state) => ({ ...state, [selectedId]: true }));
                         setVisionSummaryByVehicle((state) => ({ ...state, [selectedId]: data }));
-                        setLoadKey((k) => k + 1);
                       } catch (error) {
                         const detail = error?.response?.data?.detail || 'Failed to start backend vision stream';
                         setVisionError(String(detail));
@@ -346,7 +350,6 @@ export default function CameraPage() {
                       try {
                         await visionAPI.stop(selectedId);
                         setVisionEnabledByVehicle((state) => ({ ...state, [selectedId]: false }));
-                        setLoadKey((k) => k + 1);
                       } catch (error) {
                         const detail = error?.response?.data?.detail || 'Failed to stop backend vision stream';
                         setVisionError(String(detail));
@@ -404,6 +407,7 @@ export default function CameraPage() {
             </CardContent>
           </Card>
         </div>
+
       </div>
     </div>
   );

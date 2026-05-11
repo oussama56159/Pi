@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from .mission_downloader import download_mission_from_autopilot
 from .mission_uploader import upload_mission_event_to_autopilot
 from .mqtt_bridge import MqttBridge
 from .telemetry_state import TelemetryState
+from .connection_loss_backup import write_connection_loss_backup
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +83,13 @@ async def _mavlink_loop(reader: MavlinkReader, state: TelemetryState, settings: 
     while True:
         msg = await queue.get()
 
+        now_mono = time.monotonic()
+        state.last_mavlink_msg_at = now_mono
+
         reader.notify(msg)
 
         if msg.name == "HEARTBEAT":
+            state.last_autopilot_heartbeat_at = now_mono
             base_mode = int(msg.data.get("base_mode", 0))
             armed = bool(base_mode & 0b10000000)  # MAV_MODE_FLAG_SAFETY_ARMED
             state.system.armed = armed
@@ -326,6 +332,33 @@ async def _run() -> None:
     system_alert_queue: asyncio.Queue = asyncio.Queue(maxsize=200)
     telemetry_state = TelemetryState(vehicle_id=settings.VEHICLE_ID, system_alert_queue=system_alert_queue)
 
+    async def _autopilot_connection_loss_monitor() -> None:
+        """When the MAVLink heartbeat stops, write last 60s telemetry to disk."""
+        loss_timeout_s = 5.0
+        in_loss = False
+
+        while True:
+            await asyncio.sleep(1.0)
+            last = telemetry_state.last_autopilot_heartbeat_at
+            if last is None:
+                continue
+
+            age = time.monotonic() - float(last)
+            if (not in_loss) and age > loss_timeout_s:
+                in_loss = True
+                frames = telemetry_state.get_recent_frames()
+                if frames:
+                    write_connection_loss_backup(
+                        frames=frames,
+                        reason=f"autopilot_heartbeat_timeout_{loss_timeout_s:.0f}s",
+                        path="con_loss_backup",
+                    )
+                    logger.warning("Autopilot heartbeat lost; wrote con_loss_backup with %d frames", len(frames))
+                else:
+                    logger.warning("Autopilot heartbeat lost; no buffered telemetry frames to write")
+            elif in_loss and age <= loss_timeout_s:
+                in_loss = False
+
     bridge = MqttBridge(
         org_id=settings.ORG_ID,
         vehicle_id=settings.VEHICLE_ID,
@@ -463,6 +496,7 @@ async def _run() -> None:
 
     await asyncio.gather(
         _mavlink_loop(reader, telemetry_state, settings),
+        _autopilot_connection_loss_monitor(),
         _gcs_heartbeat_loop(reader, max(1.0, settings.HEARTBEAT_HZ)),
         bridge.run(
             telemetry_state=telemetry_state,

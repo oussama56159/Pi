@@ -165,11 +165,11 @@ export default function NotificationHistoryPage() {
 
         <div className="flex flex-wrap gap-2">
           <Link
-            to="/app/alerts"
+            to="/app/notifications"
             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-slate-600 text-sm font-medium text-slate-200 hover:bg-slate-800 transition-colors"
           >
             <ArrowUpDown className="w-4 h-4" />
-            Open Alerts
+            Stay on History
           </Link>
           <Button variant="secondary" size="sm" icon={Filter} onClick={resetFilters}>
             Reset Filters

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import asyncio
+import time
 
 from backend.shared.schemas.telemetry import (
     AttitudeData,
@@ -31,11 +33,36 @@ class TelemetryState:
     # Optional outbox for system messages (e.g., MAVLink STATUSTEXT).
     system_alert_queue: asyncio.Queue | None = None
 
+    # Connection/health timestamps (monotonic seconds)
+    last_mavlink_msg_at: float | None = None
+    last_autopilot_heartbeat_at: float | None = None
+
+    # Rolling buffer of recent telemetry frames (last 60 seconds)
+    _recent_frames: deque[tuple[float, dict]] = field(default_factory=deque, repr=False)
+
     heading: float = 0.0
     groundspeed: float = 0.0
     airspeed: float = 0.0
     climb_rate: float = 0.0
     throttle: float = 0.0
+
+    def record_frame(self, frame: TelemetryFrame, *, window_s: float = 60.0) -> None:
+        """Store a rolling history of frames for post-incident debugging."""
+        now = time.monotonic()
+        try:
+            payload = frame.model_dump(mode="json")
+        except Exception:
+            return
+
+        self._recent_frames.append((now, payload))
+
+        cutoff = now - float(window_s)
+        while self._recent_frames and self._recent_frames[0][0] < cutoff:
+            self._recent_frames.popleft()
+
+    def get_recent_frames(self) -> list[dict]:
+        """Return buffered frames as plain JSON-serializable dicts."""
+        return [payload for (_t, payload) in list(self._recent_frames)]
 
     def to_frame(self) -> TelemetryFrame:
         self.seq += 1

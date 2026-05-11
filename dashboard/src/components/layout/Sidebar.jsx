@@ -3,7 +3,7 @@ import { clsx } from 'clsx';
 import {
   LayoutDashboard, Radar, Map, Navigation, Gamepad2, Bell,
   BarChart3, Users, Settings, ChevronLeft, ChevronRight, Shield, Radio,
-  Camera, Box,
+  Camera,
 } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
 import { useAuthStore } from '@/stores/authStore';
@@ -15,12 +15,10 @@ const navItems = [
   { path: '/app/telemetry', icon: Radio, label: 'Telemetry', roles: null },
   { path: '/app/camera', icon: Camera, label: 'Camera', roles: null },
   { path: '/app/map', icon: Map, label: 'Live Map', roles: null },
-  { path: '/app/simulation-3d', icon: Box, label: '3D Simulation', roles: null },
   { path: '/app/missions', icon: Navigation, label: 'Mission Planner', roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.PILOT, ROLES.OPERATOR] },
   { path: '/app/control', icon: Gamepad2, label: 'Control Panel', roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN, ROLES.PILOT] },
   { type: 'divider' },
   { path: '/app/notifications', icon: Bell, label: 'Notifications', roles: null },
-  { path: '/app/alerts', icon: Bell, label: 'Alerts', roles: null },
   { path: '/app/analytics', icon: BarChart3, label: 'Analytics', roles: null },
   { type: 'divider' },
   { path: '/app/users', icon: Users, label: 'User Management', roles: [ROLES.SUPER_ADMIN, ROLES.ADMIN] },
