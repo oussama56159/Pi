@@ -18,6 +18,17 @@ def _orjson_loads_redis_value(value: Any) -> Any:
         return orjson.loads(value.encode("utf-8"))
     return orjson.loads(str(value).encode("utf-8"))
 
+
+def _decode_redis_str(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        try:
+            return bytes(value).decode("utf-8")
+        except Exception:
+            return str(value)
+    return str(value)
+
 class RedisRuntimeCache:
     def __init__(self) -> None:
         self._redis = get_redis()
@@ -92,7 +103,8 @@ class RedisRuntimeCache:
             await self._redis.expire(key, int(ttl_seconds))
 
     async def get_vehicle_status(self, vehicle_id: str) -> str | None:
-        return await self._redis.get(self._key_vehicle_status(vehicle_id))
+        value = await self._redis.get(self._key_vehicle_status(vehicle_id))
+        return _decode_redis_str(value)
 
     async def set_heartbeat(self, vehicle_id: str, timestamp: str, ttl_seconds: int | float | None = None) -> None:
         key = self._key_heartbeat(vehicle_id)

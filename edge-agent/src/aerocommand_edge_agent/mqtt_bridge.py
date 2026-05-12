@@ -146,8 +146,31 @@ class MqttBridge:
                                 if on_command_request is not None:
                                     try:
                                         await on_command_request(message.payload, publish_json)
-                                    except Exception:
-                                        pass
+                                    except Exception as exc:
+                                        logger.exception("Command request handler crashed: %s", exc)
+                                        # Best-effort: notify cloud so the command doesn't just silently time out.
+                                        try:
+                                            data = orjson.loads(message.payload)
+                                            command_id = str(data.get("command_id") or "unknown")
+                                        except Exception:
+                                            command_id = "unknown"
+
+                                        try:
+                                            ack = CommandAck(
+                                                command_id=command_id,
+                                                vehicle_id=self.vehicle_id,
+                                                status=CommandStatus.FAILED,
+                                                result_code=4,
+                                                message="Edge agent exception while handling command",
+                                                timestamp=datetime.now(tz=timezone.utc),
+                                            )
+                                            await client.publish(
+                                                self.command_ack_topic,
+                                                orjson.dumps(ack.model_dump(mode="json")),
+                                                qos=self.qos,
+                                            )
+                                        except Exception:
+                                            pass
                                 else:
                                     try:
                                         data = orjson.loads(message.payload)
@@ -172,15 +195,15 @@ class MqttBridge:
                                 if on_mission_upload is not None:
                                     try:
                                         await on_mission_upload(message.payload, publish_json)
-                                    except Exception:
-                                        pass
+                                    except Exception as exc:
+                                        logger.exception("Mission upload handler crashed: %s", exc)
                                 continue
                             if topic == self.mission_download_request_topic:
                                 if on_mission_download_request is not None:
                                     try:
                                         await on_mission_download_request(message.payload, publish_json)
-                                    except Exception:
-                                        pass
+                                    except Exception as exc:
+                                        logger.exception("Mission download request handler crashed: %s", exc)
                                 continue
                             if topic == self.reconcile_response_topic:
                                 # Best-effort receipt of backend replay state.
